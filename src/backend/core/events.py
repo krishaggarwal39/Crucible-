@@ -13,6 +13,12 @@ from backend.core.telemetry import events_published_total, events_dropped_total,
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Max events stored per run for replay (prevents unbounded memory use)
+MAX_REPLAY_BUFFER_SIZE = 200
+# TTL for the replay buffer (auto-expire after run is likely done)
+REPLAY_BUFFER_TTL_SECONDS = 3600  # 1 hour
+
+
 class EventPublisher(Protocol):
     """Abstract protocol for event transport."""
     async def publish(self, channel: str, message: str) -> None:
@@ -30,6 +36,42 @@ class RedisEventPublisher:
             logger.error(f"Failed to publish to redis channel {channel}: {e}")
             raise
 
+    async def store_for_replay(self, run_id: str, message: str) -> None:
+        """Store event in a Redis list for replay on reconnection."""
+        key = f"eval_replay:{run_id}"
+        try:
+            pipe = self.redis.pipeline()
+            pipe.rpush(key, message)
+            pipe.ltrim(key, -MAX_REPLAY_BUFFER_SIZE, -1)  # Keep only last N
+            pipe.expire(key, REPLAY_BUFFER_TTL_SECONDS)
+            await pipe.execute()
+        except Exception as e:
+            # Non-critical — replay is best-effort
+            logger.warning(f"Failed to store replay event for {run_id}: {e}")
+
+    async def get_replay_events(self, run_id: str, after_seq: int) -> list[str]:
+        """
+        Retrieve stored events for a run that have seq_num > after_seq.
+        Returns raw JSON strings ready to send to the client.
+        """
+        key = f"eval_replay:{run_id}"
+        try:
+            all_events = await self.redis.lrange(key, 0, -1)
+            replay = []
+            for raw in all_events:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                try:
+                    parsed = json.loads(raw)
+                    if parsed.get("seq_num", 0) > after_seq:
+                        replay.append(raw)
+                except (json.JSONDecodeError, KeyError):
+                    continue
+            return replay
+        except Exception as e:
+            logger.warning(f"Failed to read replay buffer for {run_id}: {e}")
+            return []
+
     async def close(self):
         await self.redis.close()
 
@@ -37,7 +79,7 @@ class RedisEventPublisher:
 class EventBus:
     """
     High-level Event Bus facade.
-    Handles schema validation, serialization, OTel metrics, and delegation to transport.
+    Handles schema validation, serialization, OTel metrics, replay storage, and delegation to transport.
     """
     def __init__(self, publisher: EventPublisher):
         self.publisher = publisher
@@ -53,6 +95,10 @@ class EventBus:
             payload = event.model_dump_json()
             
             await self.publisher.publish(channel, payload)
+            
+            # Also store for replay on reconnection
+            if hasattr(self.publisher, "store_for_replay"):
+                await self.publisher.store_for_replay(event.run_id, payload)
             
             # Metrics: Success
             events_published_total.add(1, {"event_type": "EvaluationEventV1", "status": event.status})
