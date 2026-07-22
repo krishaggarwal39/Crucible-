@@ -56,7 +56,7 @@ export default function LoginPage() {
       
       login(response.data.access_token, userRes.data);
     } catch (err) {
-      if (err instanceof AxiosError && err.response?.status === 401) {
+      if (err instanceof AxiosError && err.response?.status === 400) {
         setGlobalError('Invalid email or password');
       } else {
         setGlobalError('An error occurred. Please try again later.');

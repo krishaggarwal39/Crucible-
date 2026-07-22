@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Play } from 'lucide-react';
 import Link from 'next/link';
 
-export default function NewEvaluationPage() {
+import { Suspense } from 'react';
+
+function NewEvaluationForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialAgentId = searchParams.get('agent') || '';
@@ -137,5 +139,13 @@ export default function NewEvaluationPage() {
         )}
       </form>
     </div>
+  );
+}
+
+export default function NewEvaluationPage() {
+  return (
+    <Suspense fallback={<div style={{ textAlign: 'center', padding: '40px' }}>Loading form...</div>}>
+      <NewEvaluationForm />
+    </Suspense>
   );
 }

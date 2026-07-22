@@ -6,10 +6,19 @@ import { api } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save } from 'lucide-react';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
+import { useEffect } from 'react';
 
 export default function NewAgentPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      router.push('/');
+    }
+  }, [user, router]);
   
   const [formData, setFormData] = useState({
     name: '',

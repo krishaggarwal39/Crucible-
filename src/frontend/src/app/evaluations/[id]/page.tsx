@@ -20,7 +20,10 @@ export default function EvaluationDetail() {
       return res.data;
     },
     enabled: !!runId,
-    refetchInterval: (data) => (data?.status === 'running' || data?.status === 'pending' ? 3000 : false),
+    refetchInterval: (query) => {
+      const data = query.state?.data as any;
+      return data?.status === 'running' || data?.status === 'pending' ? 3000 : false;
+    },
   });
 
   if (isLoading) {
@@ -123,7 +126,7 @@ export default function EvaluationDetail() {
         {/* Log Viewer for SSE Streaming if running, or just to show it exists */}
         <div style={{ marginTop: '32px' }}>
           <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '16px' }}>Live Trace Logs</h2>
-          <LogViewer evaluationId={run.id} />
+          <LogViewer runId={run.id} status={run.status} />
         </div>
 
       </div>

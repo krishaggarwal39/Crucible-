@@ -5,9 +5,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Star, Loader2, CheckCircle2 } from 'lucide-react';
 
+import { useAuth } from '@/contexts/AuthContext';
+
 export default function BaselineToggle({ runId, isBaseline }: { runId: string; isBaseline: boolean }) {
   const queryClient = useQueryClient();
   const [success, setSuccess] = useState(false);
+  const { user } = useAuth();
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -21,6 +24,10 @@ export default function BaselineToggle({ runId, isBaseline }: { runId: string; i
       setTimeout(() => setSuccess(false), 3000);
     },
   });
+
+  if (user?.role !== 'admin') {
+    return null;
+  }
 
   if (isBaseline) {
     return (

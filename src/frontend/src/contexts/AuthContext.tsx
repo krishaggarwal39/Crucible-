@@ -8,8 +8,9 @@ import { useQueryClient } from '@tanstack/react-query';
 type User = {
   id: string;
   email: string;
-  name: string;
+  full_name: string | null;
   tenant_id: string;
+  role: 'admin' | 'member';
 };
 
 type AuthContextType = {
@@ -30,7 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const res = await api.get<{id: string; email: string; name: string; tenant_id: string}>('/api/v1/auth/me');
+        const res = await api.get<{id: string; email: string; full_name: string | null; tenant_id: string; role: 'admin' | 'member'}>('/api/v1/auth/me');
         setUser(res.data);
       } catch (err) {
         setUser(null);
@@ -59,7 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
-      // Optional: Call backend to clear the HttpOnly cookie
+      await api.post('/api/v1/auth/logout');
     } catch (e) {
       console.error('Logout failed', e);
     } finally {
