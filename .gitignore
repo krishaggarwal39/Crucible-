@@ -35,3 +35,5 @@ minio_data/
 
 # Alembic
 src/backend/db/migrations/versions/__pycache__/
+*.log
+scratch/
