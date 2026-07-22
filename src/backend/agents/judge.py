@@ -8,15 +8,25 @@ from backend.agents.prompts import JUDGE_PROMPT
 from backend.connectors.llm import LLMClient
 from backend.connectors.s3 import S3BlobStore
 from backend.schemas.evaluation import JudgmentResponse
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
+
+MAX_TRACE_PAYLOAD_SIZE = 100000
 
 llm_client = LLMClient()
 s3_client = S3BlobStore()
 
-async def judge_single_trace(trace_meta: Dict[str, Any], state: EvaluationState) -> Dict[str, Any]:
-    scenario_id = trace_meta.get("scenario_id")
-    storage_key = trace_meta.get("storage_key")
+async def _download_trace_with_retry(storage_key: str) -> bytes:
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def _download():
+        return await s3_client.download_trace(storage_key)
+    return await _download()
+
+async def judge_single_trace(trace_meta: Dict[str, Any], state: EvaluationState, semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+    async with semaphore:
+        scenario_id = trace_meta.get("scenario_id")
+        storage_key = trace_meta.get("storage_key")
     
     scenario = next((s for s in state.get("scenarios", []) if s["id"] == scenario_id), None)
     
@@ -37,10 +47,10 @@ async def judge_single_trace(trace_meta: Dict[str, Any], state: EvaluationState)
         
     try:
         # Fetch the raw trace payload from S3 instead of LangGraph state
-        trace_payload = await s3_client.download_trace(storage_key)
+        trace_payload = await _download_trace_with_retry(storage_key)
         trace_string = trace_payload.decode("utf-8")
         
-        if len(trace_string) > 100000:
+        if len(trace_string) > MAX_TRACE_PAYLOAD_SIZE:
             return {
                 "judgment": {
                     "scenario_id": scenario_id,
@@ -102,8 +112,8 @@ async def judge_trace_node(state: EvaluationState) -> Dict[str, Any]:
     if not state.get("traces"):
         return {}
         
-    judged_trace_keys = {j.get("trace_key") for j in state.get("judgments", [])}
-    unjudged_traces = [t for t in state["traces"] if t.get("storage_key") not in judged_trace_keys]
+    judged_scenario_ids = {j.get("scenario_id") for j in state.get("judgments", [])}
+    unjudged_traces = [t for t in state["traces"] if t.get("scenario_id") not in judged_scenario_ids]
     
     if not unjudged_traces:
         return {}
@@ -112,8 +122,9 @@ async def judge_trace_node(state: EvaluationState) -> Dict[str, Any]:
     errors = []
     new_judgments = []
     
-    # Process judgments concurrently
-    tasks = [judge_single_trace(trace, state) for trace in unjudged_traces]
+    # Process judgments concurrently with a semaphore to prevent memory/rate limit exhaustion
+    semaphore = asyncio.Semaphore(10)
+    tasks = [judge_single_trace(trace, state, semaphore) for trace in unjudged_traces]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     for res in results:

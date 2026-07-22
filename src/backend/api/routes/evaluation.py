@@ -15,7 +15,7 @@ import asyncio
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as aioredis
 from fastapi import Request
-from backend.api.deps import CurrentUser, CurrentUserFlexible
+from backend.api.deps import CurrentUser
 
 settings = get_settings()
 
@@ -43,15 +43,21 @@ async def create_evaluation_run(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent config not found")
         
+    from sqlalchemy import text, func
+    
     tenant_id = current_user.tenant_id
     
     # Enforce Inter-run Concurrency Limit (max 2 active runs)
-    stmt_active = select(EvaluationRun).where(
+    # Use Postgres transaction-level advisory lock to prevent TOCTOU race conditions
+    lock_id = hash(tenant_id.int) % (2**63 - 1)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)").bindparams(lock_id=lock_id))
+    
+    stmt_active = select(func.count(EvaluationRun.id)).where(
         EvaluationRun.tenant_id == tenant_id,
         EvaluationRun.status.in_(["pending", "running"])
     )
-    active_runs = (await db.execute(stmt_active)).scalars().all()
-    if len(active_runs) >= 2:
+    active_count = (await db.execute(stmt_active)).scalar()
+    if active_count >= 2:
         raise HTTPException(
             status_code=429, 
             detail="Concurrency limit exceeded: You already have 2 active evaluation runs. Please wait for them to finish."
@@ -177,7 +183,10 @@ async def delete_evaluation_run(
         delete_s3_traces.delay(str(run_id), str(current_user.tenant_id))
     except Exception as e:
         logger.error(f"Failed to enqueue S3 cleanup task for run {run_id}: {e}")
-        # Proceed with deletion anyway, S3 lifecycle rules will eventually catch it
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to enqueue cleanup task. Deletion aborted to prevent orphaned S3 data."
+        )
         
     await db.delete(run)
     await db.commit()

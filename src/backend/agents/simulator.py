@@ -46,18 +46,30 @@ async def simulate_scenario(scenario: Dict[str, Any], connector: Any, tenant_id:
     max_turns = 5
     current_input = red_team_input
     
+    payload = scenario.get("input_payload") or {}
+    if isinstance(payload, dict):
+        payload["message"] = current_input
+    else:
+        payload = {"message": current_input}
+        
     for turn in range(max_turns):
         try:
-            target_response = await connector.send_interaction({"message": current_input})
+            target_response = await connector.send_interaction(payload)
             interaction_log.append({"role": "target_agent", "content": target_response})
             
-            # Simple heuristic for loop termination: if agent says it's done or no tools called
-            # In a full system, the Red Team LLM would evaluate if the scenario is complete
-            if target_response.get("status") == "complete" or "tool_calls" not in target_response:
+            # More robust termination logic: if agent explicitly returns a termination status, 
+            # or if we're just doing a basic 1-turn request-response ping
+            is_complete = False
+            if isinstance(target_response, dict):
+                status_val = target_response.get("status", "").lower()
+                is_complete = (status_val in ["complete", "done", "success"])
+                
+            if is_complete or turn == max_turns - 1:
                 break
                 
             # Simulate Environment / Tool Execution (Mocked for now)
             current_input = "Environment feedback: Tool executed successfully."
+            payload["message"] = current_input
             interaction_log.append({"role": "environment", "content": current_input})
             
         except Exception as e:
@@ -102,10 +114,17 @@ async def simulate_environment_node(state: EvaluationState) -> Dict[str, Any]:
     Uploads raw traces to S3 and returns trace metadata for the state.
     """
     scenarios = state.get("scenarios", [])
+    config = state.get("config", {})
+    tenant_id = state.get("tenant_id")
+    run_id = state.get("run_id")
+    
+    # State Validation
+    if not tenant_id or not run_id:
+        return {"errors": ["Missing critical state variables (tenant_id, run_id) in simulator node"]}
+        
     if not scenarios:
         return {}
         
-    config = state.get("config", {})
     connector_type_str = config.get("connector_type")
     
     # Map string back to Enum if needed, or handle string directly

@@ -116,12 +116,16 @@ async def _execute_evaluation_run_async(run_id: str):
             final_state = initial_state
             current_status = "running"
             _cancelled = False
+            import time
+            last_cancel_check = time.time()
             
             async for event in graph.astream(initial_state, stream_mode="updates"):
-                # Poll database for cancellation
-                async with AsyncSessionLocal() as check_session:
-                    stmt_cancel = select(EvaluationRun.status).where(EvaluationRun.id == UUID(run_id))
-                    current_status = await check_session.scalar(stmt_cancel)
+                # Poll database for cancellation (throttled to every 5 seconds)
+                if time.time() - last_cancel_check > 5.0:
+                    async with AsyncSessionLocal() as check_session:
+                        stmt_cancel = select(EvaluationRun.status).where(EvaluationRun.id == UUID(run_id))
+                        current_status = await check_session.scalar(stmt_cancel)
+                    last_cancel_check = time.time()
                     
                 if current_status == "cancelled":
                     logger.info(f"Run {run_id} cancelled by user during execution.")
@@ -226,13 +230,16 @@ async def _heartbeat_loop(run_id: str):
     try:
         while True:
             await asyncio.sleep(interval)
-            async with AsyncSessionLocal() as session:
-                stmt = select(EvaluationRun).where(EvaluationRun.id == UUID(run_id))
-                result = await session.execute(stmt)
-                run = result.scalar_one_or_none()
-                if run and run.status == "running":
-                    run.last_heartbeat_at = datetime.now(timezone.utc)
-                    await session.commit()
+            try:
+                async with AsyncSessionLocal() as session:
+                    stmt = select(EvaluationRun).where(EvaluationRun.id == UUID(run_id))
+                    result = await session.execute(stmt)
+                    run = result.scalar_one_or_none()
+                    if run and run.status == "running":
+                        run.last_heartbeat_at = datetime.now(timezone.utc)
+                        await session.commit()
+            except Exception as e:
+                logger.warning(f"Heartbeat DB error for run {run_id}: {e}")
     except asyncio.CancelledError:
         pass
 
