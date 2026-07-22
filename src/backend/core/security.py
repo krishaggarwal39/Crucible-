@@ -90,9 +90,9 @@ def _get_fernet() -> Fernet:
             key_bytes = key_bytes[:32]
             
         try:
-            base64.urlsafe_b64decode(key_bytes)
+            Fernet(key_bytes)
             key = key_bytes
-        except Exception:
+        except ValueError:
             key = base64.urlsafe_b64encode(key_bytes)
             
         _fernet_instance = Fernet(key)

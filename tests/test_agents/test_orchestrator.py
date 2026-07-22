@@ -29,10 +29,10 @@ async def test_graph_compiles_and_runs(mock_llm):
     
     with patch("backend.agents.simulator.TargetAgentConnector.send_interaction", new_callable=AsyncMock, return_value={"status": "ok"}):
         initial_state = {
-            "run_id": "test-run",
-            "tenant_id": "test-tenant",
-            "agent_id": "test-agent",
-            "config": {"max_budget_usd": 1.0, "target_endpoint_url": "http://dummy"},
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "tenant_id": "00000000-0000-0000-0000-000000000002",
+            "agent_id": "00000000-0000-0000-0000-000000000003",
+            "config": {"max_budget_usd": 1.0, "target_endpoint_url": "http://dummy", "connector_type": "rest_api"},
             "total_cost_usd": 0.0,
             "turn_count": 0,
             "scenarios": [],
@@ -60,10 +60,10 @@ async def test_graph_halts_on_budget_exceeded(mock_llm):
     graph = build_evaluation_graph()
     
     initial_state = {
-        "run_id": "test-run",
-        "tenant_id": "test-tenant",
-        "agent_id": "test-agent",
-        "config": {"max_budget_usd": 0.005, "target_endpoint_url": "http://dummy"},
+        "run_id": "00000000-0000-0000-0000-000000000001",
+        "tenant_id": "00000000-0000-0000-0000-000000000002",
+        "agent_id": "00000000-0000-0000-0000-000000000003",
+        "config": {"max_budget_usd": 0.005, "target_endpoint_url": "http://dummy", "connector_type": "rest_api"},
         "total_cost_usd": 0.0,
         "turn_count": 0,
         "scenarios": [],

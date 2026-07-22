@@ -62,25 +62,25 @@ async def _execute_evaluation_run_async(run_id: str):
         target_endpoint_url = run.agent_config.endpoint_url
         connector_type = run.agent_config.connector_type.value
 
-    # Prepare initial state for the orchestrator
-    initial_state = {
-        "run_id": run_id,
-        "tenant_id": tenant_id_str,
-        "agent_id": agent_id_str,
-        "config": {
-            "max_budget_usd": max_budget_usd,
-            "target_endpoint_url": target_endpoint_url,
-            "connector_type": connector_type
-        },
-            "total_cost_usd": 0.0,
-            "turn_count": 0,
-            "scenarios": [],
-            "traces": [],
-            "judgments": [],
-            "evolution_suggestions": [],
-            "drift_profile": {},
-            "errors": []
-        }
+        # Prepare initial state for the orchestrator
+        initial_state = {
+            "run_id": run_id,
+            "tenant_id": tenant_id_str,
+            "agent_id": agent_id_str,
+            "config": {
+                "max_budget_usd": max_budget_usd,
+                "target_endpoint_url": target_endpoint_url,
+                "connector_type": connector_type
+            },
+                "total_cost_usd": 0.0,
+                "turn_count": 0,
+                "scenarios": [],
+                "traces": [],
+                "judgments": [],
+                "evolution_suggestions": [],
+                "drift_profile": {},
+                "errors": []
+            }
 
         # Background task for heartbeat
         heartbeat_task = asyncio.create_task(_heartbeat_loop(run_id))

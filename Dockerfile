@@ -11,8 +11,10 @@ COPY pyproject.toml uv.lock README.md ./
 # Install dependencies
 RUN uv pip install --system -e .
 
-# Copy application code
+# Copy application code and tests
 COPY src/ src/
+COPY tests/ tests/
+COPY alembic.ini ./
 
 # Set environment
 ENV PYTHONPATH=/app/src

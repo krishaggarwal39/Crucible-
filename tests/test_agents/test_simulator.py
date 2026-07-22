@@ -26,7 +26,7 @@ async def test_simulate_environment_node_success(mocker):
         "tenant_id": "test-tenant",
         "run_id": "test-run",
         "config": {
-            "connector_type": "REST_API",
+            "connector_type": "rest_api",
             "target_endpoint_url": "http://test.com"
         },
         "scenarios": [

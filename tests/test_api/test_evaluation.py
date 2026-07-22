@@ -6,10 +6,12 @@ import uuid
 async def test_create_evaluation_run_concurrency_limit(mocker):
     # Mock db
     mock_db = mocker.AsyncMock()
+    mock_result = mocker.MagicMock()
+    mock_db.execute.return_value = mock_result
     # Mock agent config exists
-    mock_db.execute.return_value.scalar_one_or_none.return_value = mocker.Mock(id=uuid.uuid4())
+    mock_result.scalar_one_or_none.return_value = mocker.Mock(id=uuid.uuid4())
     # Mock active runs count >= 2
-    mock_db.execute.return_value.scalar.return_value = 2
+    mock_result.scalar.return_value = 2
     
     from backend.api.routes.evaluation import create_evaluation_run
     from backend.schemas.evaluation import EvaluationRunCreate
@@ -28,10 +30,12 @@ async def test_create_evaluation_run_concurrency_limit(mocker):
 async def test_cancel_evaluation_run_terminal_state(mocker):
     # Mock db
     mock_db = mocker.AsyncMock()
+    mock_result = mocker.MagicMock()
+    mock_db.execute.return_value = mock_result
     
     # Mock run exists but is already completed
     run_mock = mocker.Mock(status="completed")
-    mock_db.execute.return_value.scalar_one_or_none.return_value = run_mock
+    mock_result.scalar_one_or_none.return_value = run_mock
     
     from backend.api.routes.evaluation import cancel_evaluation_run
     from fastapi import HTTPException

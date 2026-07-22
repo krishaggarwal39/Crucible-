@@ -45,7 +45,7 @@ class AgentConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tenants.id"), nullable=False
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     created_by: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
