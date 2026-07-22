@@ -1,5 +1,5 @@
 import operator
-from typing import Annotated, Any, Dict, List, TypedDict
+from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 
 class EvaluationState(TypedDict):
@@ -22,8 +22,8 @@ class EvaluationState(TypedDict):
     judgments: Annotated[List[Dict[str, Any]], operator.add]
     evolution_suggestions: Annotated[List[Dict[str, Any]], operator.add]
     
-    # AI Operations
-    drift_profile: Dict[str, Any]
+    # AI Operations — nullable because analyzer may find no baseline or no traces
+    drift_profile: Optional[Dict[str, Any]]
     
     # Error tracking
     errors: Annotated[List[str], operator.add]
