@@ -1,0 +1,70 @@
+name: Crucible CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    
+    # Setup services needed for integration tests
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crucible_test
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: crucible_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        
+    - name: Install uv
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        
+    - name: Install dependencies
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv pip install --system -e ".[dev]"
+        
+    - name: Lint with Ruff
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv run ruff check src/backend/
+        
+    - name: Run Pytest Integration Suite
+      env:
+        POSTGRES_USER: crucible_test
+        POSTGRES_PASSWORD: test_password
+        POSTGRES_DB: crucible_test_db
+        POSTGRES_HOST: localhost
+        REDIS_HOST: localhost
+        JWT_SECRET: test_secret_key_ci
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv run pytest tests/ -v
