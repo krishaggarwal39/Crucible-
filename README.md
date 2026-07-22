@@ -1,2 +1,2 @@
 # Crucible
-Autonomous AI Agent Evaluation & Evolution Platform.
+Evaluation and orchestration backend.
