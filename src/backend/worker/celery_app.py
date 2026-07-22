@@ -25,5 +25,9 @@ celery_app.conf.update(
             "task": "backend.worker.beat.sweep_zombie_runs",
             "schedule": 60.0,
         },
+        "cleanup-orphaned-traces-every-10-minutes": {
+            "task": "backend.worker.beat.cleanup_orphaned_traces",
+            "schedule": 600.0,
+        },
     }
 )
