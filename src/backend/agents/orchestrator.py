@@ -13,31 +13,27 @@ from backend.agents.evolution import evolution_node
 
 # ── Routing Logic ─────────────────────────────────────────────────────────────
 
-def route_after_generation(state: EvaluationState) -> Literal["simulate", END]:  # type: ignore
+def _is_budget_exceeded(state: EvaluationState) -> bool:
     budget = state.get("config", {}).get("max_budget_usd", 5.0)
-    if state.get("total_cost_usd", 0.0) > budget:
-        return END
-    if not state.get("scenarios"):
+    return state.get("total_cost_usd", 0.0) > budget
+
+def route_after_generation(state: EvaluationState) -> Literal["simulate", END]:  # type: ignore
+    if _is_budget_exceeded(state) or not state.get("scenarios"):
         return END
     return "simulate"
 
 def route_after_simulation(state: EvaluationState) -> Literal["judge", END]:  # type: ignore
-    budget = state.get("config", {}).get("max_budget_usd", 5.0)
-    if state.get("total_cost_usd", 0.0) > budget:
-        return END
-    if not state.get("traces"):
+    if _is_budget_exceeded(state) or not state.get("traces"):
         return END
     return "judge"
 
 def route_after_judgment(state: EvaluationState) -> Literal["analyze", END]:  # type: ignore
-    budget = state.get("config", {}).get("max_budget_usd", 5.0)
-    if state.get("total_cost_usd", 0.0) > budget:
+    if _is_budget_exceeded(state):
         return END
     return "analyze"
 
 def route_after_analyze(state: EvaluationState) -> Literal["evolution", END]:  # type: ignore
-    budget = state.get("config", {}).get("max_budget_usd", 5.0)
-    if state.get("total_cost_usd", 0.0) > budget:
+    if _is_budget_exceeded(state):
         return END
     return "evolution"
 
