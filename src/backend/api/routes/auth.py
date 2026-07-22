@@ -90,14 +90,34 @@ async def refresh_token(
         response.delete_cookie("refresh_token")
         raise HTTPException(status_code=401, detail="Invalid refresh token")
         
+    import redis.asyncio as aioredis
+    redis = aioredis.from_url(settings.REDIS_URL)
+    try:
+        is_blocked = await redis.get(f"blocklist:{refresh_token}")
+        if is_blocked:
+            response.delete_cookie("refresh_token")
+            raise HTTPException(status_code=401, detail="Refresh token has been revoked")
+    finally:
+        await redis.close()
+        
     access_token = create_access_token(subject=user_id)
     return Token(access_token=access_token, token_type="bearer")
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
     """
-    Clear the refresh token cookie.
+    Clear the refresh token cookie and invalidate it in Redis.
     """
+    refresh_token = request.cookies.get("refresh_token")
+    if refresh_token:
+        # Invalidate the token by storing it in Redis until it naturally expires (7 days)
+        import redis.asyncio as aioredis
+        redis = aioredis.from_url(settings.REDIS_URL)
+        try:
+            await redis.setex(f"blocklist:{refresh_token}", 7 * 24 * 60 * 60, "revoked")
+        finally:
+            await redis.close()
+            
     response.delete_cookie("refresh_token")
     return {"message": "Logged out successfully"}
 

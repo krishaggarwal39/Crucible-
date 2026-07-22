@@ -37,7 +37,7 @@ class SSRFSafeBackend(httpcore.AnyIOBackend):
             ip_obj = ipaddress.ip_address(ip)
             
             if settings.APP_ENV != "development":
-                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or str(ip_obj) == "0.0.0.0":
                     raise SSRFViolationError(f"Resolved IP {ip} is in a restricted private range.")
                     
             # Connect using the validated IP to avoid TOCTOU
@@ -55,19 +55,29 @@ class CircuitBreaker:
         self.key = f"circuit_breaker:{key_prefix}"
         
     async def record_failure(self):
-        failures = await self.redis.incr(self.key)
-        if failures == 1:
-            # Expire failures after 60 seconds of no new failures
-            await self.redis.expire(self.key, 60)
+        try:
+            failures = await self.redis.incr(self.key)
+            if failures == 1:
+                # Expire failures after 60 seconds of no new failures
+                await self.redis.expire(self.key, 60)
+        except Exception as e:
+            logger.warning(f"Redis circuit breaker record_failure error: {e}. Failing open.")
             
     async def record_success(self):
-        await self.redis.delete(self.key)
+        try:
+            await self.redis.delete(self.key)
+        except Exception as e:
+            logger.warning(f"Redis circuit breaker record_success error: {e}. Failing open.")
         
     async def is_open(self) -> bool:
-        failures_str = await self.redis.get(self.key)
-        if failures_str:
-            return int(failures_str) >= self.failure_threshold
-        return False
+        try:
+            failures_str = await self.redis.get(self.key)
+            if failures_str:
+                return int(failures_str) >= self.failure_threshold
+            return False
+        except Exception as e:
+            logger.warning(f"Redis circuit breaker is_open error: {e}. Failing open.")
+            return False
         
     async def close(self):
         await self.redis.aclose()

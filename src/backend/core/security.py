@@ -77,10 +77,24 @@ import json
 
 _fernet_instance = None
 
+import base64
+
 def _get_fernet() -> Fernet:
     global _fernet_instance
     if _fernet_instance is None:
-        key = settings.CREDENTIAL_ENCRYPTION_KEY.encode('utf-8')
+        key_str = settings.CREDENTIAL_ENCRYPTION_KEY
+        key_bytes = key_str.encode('utf-8')
+        if len(key_bytes) < 32:
+            key_bytes = key_bytes.ljust(32, b'0')
+        elif len(key_bytes) > 32:
+            key_bytes = key_bytes[:32]
+            
+        try:
+            base64.urlsafe_b64decode(key_bytes)
+            key = key_bytes
+        except Exception:
+            key = base64.urlsafe_b64encode(key_bytes)
+            
         _fernet_instance = Fernet(key)
     return _fernet_instance
 

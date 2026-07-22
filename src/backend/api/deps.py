@@ -63,15 +63,4 @@ async def get_current_user(session: SessionDep, token: TokenDep) -> User:
         
     return user
 
-from fastapi import Query
-async def get_current_user_flexible(
-    session: SessionDep, 
-    token: str = Query(None),
-    header_token: str = Depends(oauth2_scheme)
-) -> User:
-    # Use query token if provided (for SSE), otherwise fallback to header
-    actual_token = token if token else header_token
-    return await get_current_user(session, actual_token)
-
 CurrentUser = Annotated[User, Depends(get_current_user)]
-CurrentUserFlexible = Annotated[User, Depends(get_current_user_flexible)]
