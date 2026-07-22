@@ -4,16 +4,18 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, Users, Activity, Settings } from 'lucide-react';
 import styles from './Sidebar.module.css';
+import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Agent Configs', href: '/agents', icon: Users },
-  { name: 'Evaluations', href: '/evaluations', icon: Activity },
-  { name: 'AI Operations', href: '/operations', icon: Settings },
+  { name: 'Dashboard', href: '/', icon: LayoutDashboard, adminOnly: false },
+  { name: 'Agent Configs', href: '/agents', icon: Users, adminOnly: true },
+  { name: 'Evaluations', href: '/evaluations', icon: Activity, adminOnly: false },
+  { name: 'AI Operations', href: '/operations', icon: Settings, adminOnly: true },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   return (
     <aside className={styles.sidebar}>
@@ -23,7 +25,9 @@ export default function Sidebar() {
       </div>
       
       <nav className={styles.nav}>
-        {navItems.map((item) => {
+        {navItems
+          .filter(item => !item.adminOnly || user?.role === 'admin')
+          .map((item) => {
           const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
           const Icon = item.icon;
           

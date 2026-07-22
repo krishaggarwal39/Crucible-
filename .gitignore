@@ -45,3 +45,6 @@ minio_data/
 src/backend/db/migrations/versions/__pycache__/
 *.log
 scratch/
+
+# Scratch artifacts
+cookies.txt

@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import Link from 'next/link';
 import { Plus, Bot, MoreVertical } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
 
 type AgentConfig = {
   id: string;
@@ -15,6 +17,15 @@ type AgentConfig = {
 };
 
 export default function AgentsPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      router.push('/');
+    }
+  }, [user, router]);
+
   const { data: agents, isLoading, error } = useQuery<AgentConfig[]>({
     queryKey: ['agent-configs'],
     queryFn: async () => {

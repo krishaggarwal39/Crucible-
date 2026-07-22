@@ -10,8 +10,10 @@ from backend.api.deps import CurrentUser, SessionDep
 from backend.core.security import create_access_token, dummy_verify, verify_password, create_refresh_token
 from backend.db.models.user import User
 from backend.schemas.token import Token
-from backend.schemas.user import UserResponse
+from backend.schemas.user import UserResponse, UserRegister
 from backend.core.config import get_settings
+from backend.db.models.tenant import Tenant
+from backend.db.models.user import User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 settings = get_settings()
@@ -61,6 +63,58 @@ async def login(
     )
     
     return Token(access_token=access_token, token_type="bearer")
+
+
+@router.post("/register", response_model=UserResponse)
+async def register(
+    session: SessionDep,
+    data: UserRegister,
+) -> UserResponse:
+    """
+    Register a new user and create a tenant for them.
+    """
+    from backend.core.security import get_password_hash
+    import re
+    import uuid
+
+    stmt = select(User).where(User.email == data.email.lower())
+    result = await session.execute(stmt)
+    if result.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+        
+    base_slug = re.sub(r'[^a-z0-9]+', '-', data.company_name.lower()).strip('-')
+    if not base_slug:
+        base_slug = f"tenant-{uuid.uuid4().hex[:8]}"
+        
+    slug = base_slug
+    counter = 1
+    while True:
+        t_stmt = select(Tenant).where(Tenant.slug == slug)
+        t_result = await session.execute(t_stmt)
+        if not t_result.scalars().first():
+            break
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+        
+    tenant = Tenant(name=data.company_name, slug=slug)
+    session.add(tenant)
+    await session.flush()
+    
+    hashed_password = await get_password_hash(data.password)
+    user = User(
+        email=data.email.lower(),
+        hashed_password=hashed_password,
+        full_name=data.name,
+        role=UserRole.ADMIN,
+        tenant_id=tenant.id
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 @router.post("/refresh", response_model=Token)

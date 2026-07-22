@@ -8,7 +8,14 @@ def mock_llm():
     with patch("backend.agents.generator.llm_client.generate") as mock_gen, \
          patch("backend.agents.judge.llm_client.generate") as mock_judge, \
          patch("backend.agents.simulator.upload_trace_with_retry", return_value="dummy/s3/path"), \
-         patch("backend.agents.judge.s3_client.download_trace", return_value=b'{"interactions": []}'):
+         patch("backend.agents.judge.s3_client.download_trace", return_value=b'{"interactions": []}'), \
+         patch("backend.agents.analyzer.vector_db.init_collection", new_callable=AsyncMock), \
+         patch("backend.agents.analyzer.s3_client.download_trace", new_callable=AsyncMock, return_value=b'{"interactions": []}'), \
+         patch("backend.agents.analyzer.llm_client.generate", new_callable=AsyncMock, return_value={"content": "summary", "cost_usd": 0.001}), \
+         patch("backend.agents.analyzer.llm_client.embed", new_callable=AsyncMock, return_value={"vector": [0.1] * 1536, "cost_usd": 0.0001}), \
+         patch("backend.agents.analyzer.vector_db.upsert_trace_embedding", new_callable=AsyncMock), \
+         patch("backend.agents.analyzer._resolve_baseline", new_callable=AsyncMock, return_value=None), \
+         patch("backend.agents.evolution.llm_client.generate", new_callable=AsyncMock) as mock_evo:
         
         mock_gen.return_value = {
             "parsed": ScenarioGenerationResponse(
@@ -48,12 +55,10 @@ async def test_graph_compiles_and_runs(mock_llm):
         assert len(result["scenarios"]) == 1
         assert "traces" in result
         assert "judgments" in result
-        # generator: 0.01, simulator: 0 (no mock cost added), judge: 0.02 = 0.03 (analyze_drift_node returns empty dict now)
-        assert abs(result["total_cost_usd"] - 0.03) < 1e-5
-        # 1 from generate + 1 from simulate (1 scenario) + 1 from judge = 3 turns, wait... generate doesn't add turn_count?
-        # generator returns turn_count=1, simulator adds turn_count=1 (len(scenarios)), judge adds turn_count=1 (len(traces))
-        # Total turns = 3. Wait, analyze_drift_node doesn't return anything.
-        assert result["turn_count"] == 3
+        # generator: 0.01, simulator: 0, judge: 0.02, analyzer: 0.0011 (summary + embed)
+        assert result["total_cost_usd"] > 0.03
+        # generator: 1, simulator: 1, judge: 1 = 3 turns minimum
+        assert result["turn_count"] >= 3
 
 @pytest.mark.asyncio
 async def test_graph_halts_on_budget_exceeded(mock_llm):

@@ -70,21 +70,20 @@ async def _execute_evaluation_run_async(run_id: str):
             "config": {
                 "max_budget_usd": max_budget_usd,
                 "target_endpoint_url": target_endpoint_url,
-                "connector_type": connector_type
+                "connector_type": connector_type,
+                "target_description": run.agent_config.description or "An AI agent",
+                "target_system_prompt": run.agent_config.system_prompt or "You are a helpful assistant",
             },
-                "total_cost_usd": 0.0,
-                "turn_count": 0,
-                "scenarios": [],
-                "traces": [],
-                "judgments": [],
-                "evolution_suggestions": [],
-                "drift_profile": {},
-                "errors": []
-            }
+            "total_cost_usd": 0.0,
+            "turn_count": 0,
+            "scenarios": [],
+            "traces": [],
+            "judgments": [],
+            "evolution_suggestions": [],
+            "drift_profile": {},
+            "errors": [],
+        }
 
-        # Background task for heartbeat
-        heartbeat_task = asyncio.create_task(_heartbeat_loop(run_id))
-        
         # Setup Event Bus
         event_bus = None
         heartbeat_task = None
@@ -310,11 +309,19 @@ async def _persist_final_state(session: AsyncSession, run: EvaluationRun, final_
             failed_count += 1
 
     # Atomic increment of scores
+    total = passed_count + failed_count
     run.passed_scenarios = EvaluationRun.passed_scenarios + passed_count
     run.failed_scenarios = EvaluationRun.failed_scenarios + failed_count
+    run.total_scenarios = EvaluationRun.total_scenarios + total
+    
+    # Compute average score from judgments
+    scores = [j.get("score", 0.0) for j in judgments_data if j.get("trace_key") in trace_models_by_key]
+    if scores:
+        run.avg_score = sum(scores) / len(scores)
     
     run.drift_profile = final_state.get("drift_profile")
     run.evolution_suggestions = final_state.get("evolution_suggestions")
+    run.embedding_model_version = "text-embedding-3-small"
 
 
 @shared_task(bind=True)

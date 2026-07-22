@@ -64,3 +64,11 @@ async def get_current_user(session: SessionDep, token: TokenDep) -> User:
     return user
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+async def get_current_admin(current_user: CurrentUser) -> User:
+    from backend.db.models.user import UserRole
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Not enough privileges")
+    return current_user
+
+CurrentAdmin = Annotated[User, Depends(get_current_admin)]

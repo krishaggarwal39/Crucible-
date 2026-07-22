@@ -83,19 +83,19 @@ def _get_fernet() -> Fernet:
     global _fernet_instance
     if _fernet_instance is None:
         key_str = settings.CREDENTIAL_ENCRYPTION_KEY
-        key_bytes = key_str.encode('utf-8')
-        if len(key_bytes) < 32:
-            key_bytes = key_bytes.ljust(32, b'0')
-        elif len(key_bytes) > 32:
-            key_bytes = key_bytes[:32]
-            
+        
+        # Try to use the key directly (expected: a Fernet.generate_key() output)
         try:
-            Fernet(key_bytes)
-            key = key_bytes
-        except ValueError:
-            key = base64.urlsafe_b64encode(key_bytes)
+            _fernet_instance = Fernet(key_str.encode('utf-8'))
+        except (ValueError, Exception):
+            # Fallback: treat as a raw 32-byte key and base64-encode it
+            key_bytes = key_str.encode('utf-8')
+            if len(key_bytes) < 32:
+                key_bytes = key_bytes.ljust(32, b'0')
+            elif len(key_bytes) > 32:
+                key_bytes = key_bytes[:32]
+            _fernet_instance = Fernet(base64.urlsafe_b64encode(key_bytes))
             
-        _fernet_instance = Fernet(key)
     return _fernet_instance
 
 def encrypt_credentials(credentials: dict | str) -> str:

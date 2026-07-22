@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     # ── Encryption ───────────────────────────────────────────────────────────
     # A base64-encoded 32-byte key generated via `Fernet.generate_key()`
-    CREDENTIAL_ENCRYPTION_KEY: str = "tV9zV1BfF7P-XnJ9V7sW9dYk5c1jZ4Uv2pM8TfA0M_g="
+    CREDENTIAL_ENCRYPTION_KEY: str
 
     @model_validator(mode="after")
     def validate_jwt_secret(self) -> "Settings":

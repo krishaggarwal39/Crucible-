@@ -63,7 +63,7 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       S3_ENDPOINT_URL: http://minio:9000
-      JWT_SECRET: ${JWT_SECRET:-your_super_secret_jwt_key_here}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_super_secret_jwt_key_here}
     command: >
       sh -c "alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port 8000"
     depends_on:
@@ -87,6 +87,7 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       S3_ENDPOINT_URL: http://minio:9000
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_super_secret_jwt_key_here}
     command: celery -A backend.worker.celery_app worker --loglevel=info -c 4
     depends_on:
       postgres:
@@ -106,6 +107,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-crucible}
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_super_secret_jwt_key_here}
     command: celery -A backend.worker.celery_app beat --loglevel=info
     depends_on:
       postgres:
@@ -120,7 +122,7 @@ services:
     container_name: crucible-frontend
     restart: always
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost
     depends_on:
       - backend
 
