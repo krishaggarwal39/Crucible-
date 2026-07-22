@@ -4,7 +4,7 @@ from sqlalchemy import select
 from typing import List
 from uuid import UUID
 
-from backend.api.deps import get_db, CurrentUser
+from backend.api.deps import get_db, CurrentUser, CurrentAdmin
 from backend.db.models.agent_config import AgentConfig
 from backend.schemas.agent_config import AgentConfigCreate, AgentConfigResponse
 from backend.core.security import encrypt_credentials
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/agent-configs", tags=["Agent Configs"])
 @router.post("/", response_model=AgentConfigResponse, status_code=status.HTTP_201_CREATED)
 async def create_agent_config(
     config_in: AgentConfigCreate,
-    current_user: CurrentUser,
+    current_user: CurrentAdmin,
     db: AsyncSession = Depends(get_db)
 ):
     """
