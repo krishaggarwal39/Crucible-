@@ -15,7 +15,7 @@ import asyncio
 from sse_starlette.sse import EventSourceResponse
 import redis.asyncio as aioredis
 from fastapi import Request
-from backend.api.deps import CurrentUser
+from backend.api.deps import CurrentUser, CurrentAdmin
 
 settings = get_settings()
 
@@ -68,7 +68,7 @@ async def create_evaluation_run(
         tenant_id=tenant_id,
         agent_config_id=agent.id,
         name=run_in.name,
-        run_config=run_in.run_config,
+        run_config=run_in.run_config.model_dump(),
         status="pending"
     )
     db.add(db_run)
@@ -161,7 +161,7 @@ async def cancel_evaluation_run(
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_evaluation_run(
     run_id: UUID,
-    current_user: CurrentUser,
+    current_user: CurrentAdmin,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -225,11 +225,15 @@ async def get_stream_ticket(
 async def stream_evaluation_run(
     run_id: UUID,
     request: Request,
-    ticket: str = Query(...)
+    ticket: str = Query(...),
+    last_seq: int = Query(default=0, ge=0),
 ):
     """
     Stream evaluation run progress via Server-Sent Events (SSE).
     Authenticates via short-lived ticket to prevent token leakage.
+    
+    On reconnection, pass `last_seq` (the last seq_num you received) to replay
+    any events missed during the disconnection window.
     """
     redis = aioredis.from_url(settings.REDIS_PUBSUB_URL)
     
@@ -245,6 +249,19 @@ async def stream_evaluation_run(
         
         async def event_generator(redis_client):
             sse_active_connections.add(1)
+            
+            # 2. Replay missed events if client is reconnecting
+            if last_seq > 0:
+                from backend.core.events import RedisEventPublisher
+                replay_publisher = RedisEventPublisher()
+                try:
+                    missed_events = await replay_publisher.get_replay_events(str(run_id), last_seq)
+                    for event_data in missed_events:
+                        yield {"data": event_data}
+                finally:
+                    await replay_publisher.close()
+            
+            # 3. Subscribe to live events
             pubsub = redis_client.pubsub()
             channel_name = f"eval_stream:{run_id}"
             await pubsub.subscribe(channel_name)
@@ -279,7 +296,7 @@ async def stream_evaluation_run(
 @router.post("/{run_id}/baseline", response_model=EvaluationRunResponse)
 async def set_golden_baseline(
     run_id: UUID,
-    current_user: CurrentUser,
+    current_user: CurrentAdmin,
     db: AsyncSession = Depends(get_db)
 ):
     """

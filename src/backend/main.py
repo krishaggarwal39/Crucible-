@@ -8,6 +8,7 @@ from sqlalchemy import text
 from backend.api.deps import SessionDep
 from backend.api.router import api_router
 from backend.core.config import get_settings
+from backend.core.rate_limit import RateLimitMiddleware
 
 settings = get_settings()
 
@@ -32,6 +33,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting (must be added after CORS so CORS headers still get set on 429 responses)
+app.add_middleware(RateLimitMiddleware)
 
 app.include_router(api_router, prefix="/api/v1")
 
