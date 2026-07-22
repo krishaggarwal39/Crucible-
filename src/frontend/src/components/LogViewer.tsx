@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { FixedSizeList as List } from 'react-window';
+
 import { api, getAccessToken } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -16,8 +16,9 @@ const MAX_LOG_LENGTH = 5000;
 export default function LogViewer({ runId, status }: LogViewerProps) {
   const [logs, setLogs] = useState<string[]>([]);
   const queryClient = useQueryClient();
-  const listRef = useRef<List>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const lastSeqRef = useRef<number>(0);
 
   useEffect(() => {
     // Only connect if running
@@ -38,12 +39,24 @@ export default function LogViewer({ runId, status }: LogViewerProps) {
         
         if (!isSubscribed) return;
 
-        const sseUrl = `http://localhost:8000/api/v1/evaluations/${runId}/stream?ticket=${data.ticket}`;
+        // Pass last_seq on reconnection so the server replays missed events
+        const lastSeq = lastSeqRef.current;
+        const sseUrl = `/api/v1/evaluations/${runId}/stream?ticket=${data.ticket}&last_seq=${lastSeq}`;
         const eventSource = new EventSource(sseUrl);
         eventSourceRef.current = eventSource;
 
         eventSource.onmessage = (event) => {
           let rawData = event.data;
+          
+          // Track seq_num for replay on reconnection
+          try {
+            const parsed = JSON.parse(rawData);
+            if (parsed.seq_num && parsed.seq_num > lastSeqRef.current) {
+              lastSeqRef.current = parsed.seq_num;
+            }
+          } catch {
+            // Not JSON — still display it
+          }
           
           // Truncate massive strings to prevent UI freeze
           if (rawData.length > MAX_LOG_LENGTH) {
@@ -55,14 +68,14 @@ export default function LogViewer({ runId, status }: LogViewerProps) {
             // Auto-scroll
             setTimeout(() => {
               if (listRef.current) {
-                listRef.current.scrollToItem(newLogs.length - 1, 'end');
+                listRef.current.scrollTop = listRef.current.scrollHeight;
               }
             }, 10);
             return newLogs;
           });
 
           // Terminal event check
-          if (rawData.includes('EVALUATION_COMPLETED') || rawData.includes('EVALUATION_FAILED')) {
+          if (rawData.includes('"status":"completed"') || rawData.includes('"status":"failed"')) {
             eventSource.close();
             queryClient.invalidateQueries({ queryKey: ['evaluation', runId] });
           }
@@ -74,7 +87,7 @@ export default function LogViewer({ runId, status }: LogViewerProps) {
           // On silent drop or error, fallback to REST to reconcile any missed terminal events
           queryClient.invalidateQueries({ queryKey: ['evaluation', runId] });
           
-          // Exponential backoff or simple delay before reconnecting with a fresh ticket
+          // Reconnect with exponential backoff — will replay from last_seq
           if (retryTimeoutId) clearTimeout(retryTimeoutId);
           retryTimeoutId = setTimeout(() => {
             if (isSubscribed) connectStream();
@@ -101,12 +114,6 @@ export default function LogViewer({ runId, status }: LogViewerProps) {
     };
   }, [runId, status, queryClient]);
 
-  const Row = ({ index, style }: { index: number; style: React.CSSProperties }) => (
-    <div style={{ ...style, borderBottom: '1px solid #333', padding: '4px 8px', wordBreak: 'break-all', overflowWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
-      {logs[index]}
-    </div>
-  );
-
   return (
     <div style={{ height: '600px', width: '100%', backgroundColor: '#0d1117', color: '#c9d1d9', borderRadius: '12px', border: '1px solid var(--border-color)', overflow: 'hidden', fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}>
       {logs.length === 0 ? (
@@ -116,15 +123,16 @@ export default function LogViewer({ runId, status }: LogViewerProps) {
             : 'No logs streamed. Download raw trace for details.'}
         </div>
       ) : (
-        <List
+        <div
           ref={listRef}
-          height={600}
-          itemCount={logs.length}
-          itemSize={40} // Estimated height, can be dynamic with VariableSizeList
-          width="100%"
+          style={{ width: '100%', height: '100%', overflowY: 'auto' }}
         >
-          {Row}
-        </List>
+          {logs.map((log, index) => (
+            <div key={index} style={{ borderBottom: '1px solid #333', padding: '4px 8px', wordBreak: 'break-all', overflowWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
+              {log}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

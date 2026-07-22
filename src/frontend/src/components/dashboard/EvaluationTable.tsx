@@ -84,9 +84,9 @@ export default function EvaluationTable() {
     <div className="glass" style={{ borderRadius: '12px', overflow: 'hidden' }}>
       <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Recent Evaluations</h2>
-        <button style={{ backgroundColor: 'var(--primary-color)', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <Link href="/evaluations/new" style={{ backgroundColor: 'var(--primary-color)', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', textDecoration: 'none' }}>
           <Play size={14} /> New Run
-        </button>
+        </Link>
       </div>
       
       <div style={{ overflowX: 'auto' }}>
