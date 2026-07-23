@@ -5,8 +5,10 @@ from backend.agents.state import EvaluationState
 from backend.agents.prompts import SCENARIO_GENERATOR_PROMPT
 from backend.connectors.llm import LLMClient
 from backend.schemas.evaluation import ScenarioGenerationResponse
+from backend.core.config import get_settings
 
 llm_client = LLMClient()
+settings = get_settings()
 
 async def generate_scenarios_node(state: EvaluationState) -> Dict[str, Any]:
     """
@@ -28,7 +30,7 @@ async def generate_scenarios_node(state: EvaluationState) -> Dict[str, Any]:
     
     try:
         res = await llm_client.generate(
-            model="gpt-4o",
+            model=settings.DEFAULT_GENERATOR_MODEL,
             messages=messages,
             response_model=ScenarioGenerationResponse
         )

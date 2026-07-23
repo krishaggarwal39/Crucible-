@@ -266,20 +266,25 @@ async def _persist_final_state(session: AsyncSession, run: EvaluationRun, final_
     for t in traces_data:
         s_id = t.get("scenario_id")
         scenario = scenario_models.get(s_id)
+        storage_key = t.get("storage_key")
         
+        # Skip traces that failed to upload (no storage_key)
+        if not storage_key:
+            continue
+
         trace = TraceMetadata(
             id=UUID(t["trace_id"]),
             evaluation_run_id=run.id,
             scenario_id=scenario.id if scenario else None,
-            storage_key=t["storage_key"],
+            storage_key=storage_key,
             turn_count=t.get("turn_count", 0),
-            token_count=0, # Aggregate if available
+            token_count=0,
             duration_ms=0,
             tool_call_count=0,
             error_message=t.get("error_message")
         )
         session.add(trace)
-        trace_models_by_key[t["storage_key"]] = trace
+        trace_models_by_key[storage_key] = trace
         
     await session.flush()
 
@@ -321,7 +326,7 @@ async def _persist_final_state(session: AsyncSession, run: EvaluationRun, final_
     
     run.drift_profile = final_state.get("drift_profile")
     run.evolution_suggestions = final_state.get("evolution_suggestions")
-    run.embedding_model_version = "text-embedding-3-small"
+    run.embedding_model_version = settings.DEFAULT_EMBEDDING_MODEL
 
 
 @shared_task(bind=True)

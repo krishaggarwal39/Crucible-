@@ -11,8 +11,10 @@ from backend.core.vector_db import VectorDB
 from backend.connectors.s3 import S3BlobStore
 from backend.db.session import AsyncSessionLocal
 from backend.db.models.evaluation_run import EvaluationRun
+from backend.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 llm_client = LLMClient()
 vector_db = VectorDB()
@@ -37,14 +39,14 @@ async def _process_single_trace(meta: dict, tenant_id: str, run_id: str) -> dict
     )
     try:
         sum_res = await llm_client.generate(
-            model="gpt-4o-mini",
+            model=settings.DEFAULT_GENERATOR_MODEL,
             messages=[{"role": "user", "content": summary_prompt}],
             max_tokens=300
         )
         summary_text = sum_res["content"]
         
         emb_res = await llm_client.embed(
-            model="text-embedding-3-small",
+            model=settings.DEFAULT_EMBEDDING_MODEL,
             input_text=summary_text
         )
         vector = emb_res["vector"]
@@ -54,7 +56,7 @@ async def _process_single_trace(meta: dict, tenant_id: str, run_id: str) -> dict
             run_id=run_id,
             trace_id=trace_id,
             vector=vector,
-            model_version="text-embedding-3-small",
+            model_version=settings.DEFAULT_EMBEDDING_MODEL,
             metadata={"scenario_id": scenario_id}
         )
         
@@ -100,7 +102,7 @@ async def _resolve_baseline(tenant_id: str, agent_id: str, run_id: str) -> str |
             baseline = (await session.execute(stmt)).scalar_one_or_none()
             
         if baseline:
-            if baseline.embedding_model_version != "text-embedding-3-small":
+            if baseline.embedding_model_version != settings.DEFAULT_EMBEDDING_MODEL:
                 logger.warning("Baseline embedding model mismatch")
                 return None
             return str(baseline.id)
@@ -193,7 +195,7 @@ async def analyze_drift_node(state: EvaluationState) -> Dict[str, Any]:
     baseline_vectors = await vector_db.get_baseline_vectors(
         tenant_id=tenant_id,
         baseline_run_id=baseline_run_id,
-        model_version="text-embedding-3-small"
+        model_version=settings.DEFAULT_EMBEDDING_MODEL
     )
     
     # Compute Drift

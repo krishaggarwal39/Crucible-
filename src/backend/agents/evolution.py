@@ -4,8 +4,10 @@ from pydantic import BaseModel, Field
 
 from backend.agents.state import EvaluationState
 from backend.connectors.llm import LLMClient
+from backend.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 llm_client = LLMClient()
 
@@ -53,7 +55,7 @@ async def evolution_node(state: EvaluationState) -> Dict[str, Any]:
     
     try:
         res = await llm_client.generate(
-            model="gpt-4o",
+            model=settings.DEFAULT_JUDGE_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_model=EvolutionSuggestion,
             max_tokens=2000

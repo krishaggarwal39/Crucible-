@@ -102,11 +102,14 @@ class Settings(BaseSettings):
     # ── AI Providers ─────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
 
     # ── LLM Defaults ─────────────────────────────────────────────────────────
-    DEFAULT_JUDGE_MODEL: str = "gpt-4o"
-    DEFAULT_GENERATOR_MODEL: str = "gpt-4o-mini"
-    FALLBACK_MODELS: list[str] = ["gpt-4o", "claude-3-5-sonnet-20240620", "gemini/gemini-1.5-pro"]
+    DEFAULT_JUDGE_MODEL: str = "groq/llama-3.1-8b-instant"
+    DEFAULT_GENERATOR_MODEL: str = "groq/llama-3.1-8b-instant"
+    DEFAULT_EMBEDDING_MODEL: str = "gemini/text-embedding-004"
+    FALLBACK_MODELS: list[str] = ["groq/llama-3.3-70b-versatile", "groq/llama-3.1-8b-instant"]
     MAX_TOKENS_JUDGE: int = 4096
     MAX_TOKENS_GENERATOR: int = 8192
 

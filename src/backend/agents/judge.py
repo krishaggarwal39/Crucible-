@@ -8,9 +8,11 @@ from backend.agents.prompts import JUDGE_PROMPT
 from backend.connectors.llm import LLMClient
 from backend.connectors.s3 import S3BlobStore
 from backend.schemas.evaluation import JudgmentResponse
+from backend.core.config import get_settings
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 MAX_TRACE_PAYLOAD_SIZE = 100000
 
@@ -74,7 +76,7 @@ async def judge_single_trace(trace_meta: Dict[str, Any], state: EvaluationState,
         messages = [{"role": "user", "content": prompt}]
         
         res = await llm_client.generate(
-            model="gpt-4o",
+            model=settings.DEFAULT_JUDGE_MODEL,
             messages=messages,
             response_model=JudgmentResponse
         )

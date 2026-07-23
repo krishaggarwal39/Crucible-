@@ -20,7 +20,7 @@ class VectorDB:
                 await self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=1536,  # text-embedding-3-small dimensions
+                        size=768,  # gemini/text-embedding-004 dimensions
                         distance=models.Distance.COSINE
                     )
                 )

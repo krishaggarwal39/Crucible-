@@ -106,10 +106,13 @@ class TargetAgentConnector:
             failure_threshold=4
         )
         
-        # Setup SSRF safe transport and connection pooling
-        transport = httpx.AsyncHTTPTransport()
-        transport._pool._network_backend = SSRFSafeBackend()
-        self.client = httpx.AsyncClient(timeout=self.timeout, transport=transport)
+        # Setup transport — SSRF protection only in non-development environments
+        if settings.APP_ENV != "development":
+            transport = httpx.AsyncHTTPTransport()
+            transport._pool._network_backend = SSRFSafeBackend()
+            self.client = httpx.AsyncClient(timeout=self.timeout, transport=transport)
+        else:
+            self.client = httpx.AsyncClient(timeout=self.timeout)
         
     async def close(self):
         await self.client.aclose()
