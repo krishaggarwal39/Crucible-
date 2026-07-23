@@ -48,3 +48,8 @@ scratch/
 
 # Scratch artifacts
 cookies.txt
+scratch/
+
+# AI code-gen helper files
+AGENTS.md
+CLAUDE.md
