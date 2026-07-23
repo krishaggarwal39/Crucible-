@@ -1,16 +1,17 @@
 import asyncio
 import jwt
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 
-from backend.api.deps import CurrentUser, SessionDep
+from backend.api.deps import CurrentUser, CurrentAdmin, SessionDep
 from backend.core.security import create_access_token, dummy_verify, verify_password, create_refresh_token
 from backend.db.models.user import User
 from backend.schemas.token import Token
-from backend.schemas.user import UserResponse, UserRegister
+from backend.schemas.user import UserResponse, UserRegister, UserInvite
 from backend.core.config import get_settings
 from backend.db.models.tenant import Tenant
 from backend.db.models.user import User, UserRole
@@ -181,3 +182,75 @@ async def get_me(current_user: CurrentUser) -> UserResponse:
     Get the current authenticated user.
     """
     return current_user
+
+
+@router.post("/invite", response_model=UserResponse)
+async def invite_member(
+    session: SessionDep,
+    data: UserInvite,
+    current_user: CurrentAdmin,
+) -> UserResponse:
+    """
+    Admin invites a new member to their tenant.
+    The invited user gets MEMBER role (cannot manage agents/baselines).
+    """
+    from backend.core.security import get_password_hash
+
+    # Check if email already exists in this tenant
+    stmt = select(User).where(User.email == data.email.lower(), User.tenant_id == current_user.tenant_id)
+    result = await session.execute(stmt)
+    if result.scalars().first():
+        raise HTTPException(status_code=400, detail="User already exists in this team")
+
+    hashed_password = await get_password_hash(data.password)
+    user = User(
+        email=data.email.lower(),
+        hashed_password=hashed_password,
+        full_name=data.full_name,
+        role=UserRole.MEMBER,
+        tenant_id=current_user.tenant_id,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.get("/team", response_model=list[UserResponse])
+async def list_team(
+    session: SessionDep,
+    current_user: CurrentAdmin,
+):
+    """
+    Admin can see all users in their tenant.
+    """
+    stmt = select(User).where(User.tenant_id == current_user.tenant_id).order_by(User.created_at)
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+@router.delete("/team/{user_id}")
+async def remove_member(
+    user_id: UUID,
+    session: SessionDep,
+    current_user: CurrentAdmin,
+):
+    """
+    Admin can remove a member from the team. Cannot remove yourself.
+    """
+    if str(current_user.id) == str(user_id):
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+
+    stmt = select(User).where(
+        User.id == user_id,
+        User.tenant_id == current_user.tenant_id,
+    )
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_active = False
+    await session.commit()
+    return {"message": f"User {user.email} has been deactivated"}
