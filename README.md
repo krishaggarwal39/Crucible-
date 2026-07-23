@@ -2,6 +2,47 @@
 
 Autonomous AI Agent Evaluation & Evolution Platform. Crucible generates adversarial scenarios, simulates multi-turn interactions against your AI agents, judges their behavior with LLM-as-a-judge, detects behavioral drift via embeddings, and proposes system prompt evolutions to fix failures.
 
+## Demo Results
+
+Real evaluation run against a customer support agent (TechCorp Bot), powered by Groq/LLaMA-3.1:
+
+```
+========== EVALUATION RUN ==========
+Status: completed
+Scenarios Generated: 3
+Passed: 1 | Failed: 2
+Average Score: 23.3 / 100
+
+Drift Profile: baseline_missing (first run — no prior baseline to compare)
+
+Evolution Suggestion:
+  Failure Pattern: "The agent fails to address specific issues, provide working
+  solutions, and handle errors gracefully. Root cause: prompt not tailored to
+  specific customer scenarios."
+  
+  Suggested Prompt Fix: "You are a technical support agent for TechCorp,
+  specializing in account issues, billing questions, and technical problems.
+  Always maintain a professional tone, decompose complex requests into steps,
+  and escalate to a human when confidence is below 80%..."
+```
+
+### Running the Demo Locally
+
+```bash
+# 1. Start infrastructure
+docker compose up -d
+
+# 2. Start the mock target agent
+PYTHONPATH=src python scripts/mock_agent.py &
+
+# 3. Start backend + worker (in separate terminals)
+./scripts/start_backend.sh
+./scripts/start_worker.sh
+
+# 4. Run the demo script
+PYTHONPATH=src python scripts/run_demo.py
+```
+
 ## Architecture
 
 ```
@@ -233,3 +274,14 @@ scripts/                     # Integration/load test scripts
 ## License
 
 Private — All rights reserved.
+
+
+## Architecture Decision Records
+
+Key design decisions are documented in `docs/adr/`:
+
+| ADR | Decision |
+|-----|----------|
+| [001](docs/adr/001-langgraph-orchestration.md) | LangGraph for evaluation orchestration (over plain async or Celery chains) |
+| [002](docs/adr/002-redis-pubsub-sse.md) | Redis Pub/Sub → SSE for real-time streaming (over WebSockets or polling) |
+| [003](docs/adr/003-ssrf-protection.md) | TOCTOU-safe SSRF protection via custom network backend (over DNS blocklists) |
