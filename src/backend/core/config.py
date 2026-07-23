@@ -104,12 +104,13 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
 
     # ── LLM Defaults ─────────────────────────────────────────────────────────
-    DEFAULT_JUDGE_MODEL: str = "groq/llama-3.1-8b-instant"
-    DEFAULT_GENERATOR_MODEL: str = "groq/llama-3.1-8b-instant"
-    DEFAULT_EMBEDDING_MODEL: str = "gemini/text-embedding-004"
-    FALLBACK_MODELS: list[str] = ["groq/llama-3.3-70b-versatile", "groq/llama-3.1-8b-instant"]
+    DEFAULT_JUDGE_MODEL: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    DEFAULT_GENERATOR_MODEL: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    DEFAULT_EMBEDDING_MODEL: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    FALLBACK_MODELS: list[str] = ["openrouter/nvidia/nemotron-3-nano-30b-a3b:free", "openrouter/openai/gpt-oss-20b:free"]
     MAX_TOKENS_JUDGE: int = 4096
     MAX_TOKENS_GENERATOR: int = 8192
 
