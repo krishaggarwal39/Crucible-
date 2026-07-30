@@ -55,6 +55,52 @@ def _tally(judgments: list[dict]) -> tuple[int, int]:
     return passed, len(judgments) - passed
 
 
+# Substrings that identify an upstream quota/rate problem, which is by far the
+# most common reason a run produces nothing. Worth naming explicitly because the
+# remedy is entirely different from a code fault.
+_RATE_LIMIT_MARKERS = ("rate limit", "ratelimit", "429", "quota", "insufficient_quota")
+
+
+def _summarise_pipeline_errors(errors: list[str]) -> str:
+    """
+    Turn node-level error strings into one short, actionable message.
+
+    Deliberately does not embed the raw provider payload: those contain nested
+    JSON and account identifiers, and this value is returned to API clients.
+    """
+    joined = " ".join(errors).lower()
+    if any(marker in joined for marker in _RATE_LIMIT_MARKERS):
+        return (
+            "LLM provider rate limit or quota reached, so no scenarios could be "
+            "evaluated. Check your provider's usage limits and retry later."
+        )
+    first = errors[0] if errors else "unknown error"
+    # Strip any JSON blob the provider may have appended.
+    first = first.split("{")[0].strip() or first
+    return f"Evaluation pipeline produced no results: {first[:200]}"
+
+
+def _pipeline_failed(final_state: Dict[str, Any]) -> str | None:
+    """
+    Decide whether a graph run that raised no exception actually succeeded.
+
+    Nodes accumulate problems into state["errors"] instead of raising, so the
+    graph can complete "successfully" having produced nothing at all. That is how
+    a run whose generator hit a provider rate limit was recorded as COMPLETED with
+    0 scenarios and no error message.
+
+    A run that produced no scenarios AND no judgments is a failure. Partial
+    results stay 'completed' — the per-scenario errors are still recorded.
+    """
+    errors = final_state.get("errors") or []
+    produced_nothing = not final_state.get("scenarios") and not final_state.get("judgments")
+    if produced_nothing:
+        return _summarise_pipeline_errors(errors) if errors else (
+            "Evaluation pipeline produced no scenarios or judgments."
+        )
+    return None
+
+
 def _build_graph_config(run: EvaluationRun) -> Dict[str, Any]:
     """
     Translate the persisted run_config into the graph's config dict.
@@ -223,7 +269,23 @@ async def _execute_evaluation_run_async(run_id: str):
                 )
                 await save_session.commit()
 
+        # A graph that raised nothing can still have produced nothing.
+        if not cancelled:
+            fatal_error = _pipeline_failed(final_state)
+            if fatal_error:
+                logger.error(
+                    "Run %s produced no results. errors=%s",
+                    run_id, final_state.get("errors"),
+                )
+
         passed, failed = _tally(final_state.get("judgments", []))
+        if cancelled:
+            terminal_event_status = "cancelled"
+        elif fatal_error:
+            terminal_event_status = "failed"
+        else:
+            terminal_event_status = "completed"
+
         await event_bus.publish_evaluation_event(
             EvaluationEventV1(
                 seq_num=seq_num,
@@ -231,12 +293,13 @@ async def _execute_evaluation_run_async(run_id: str):
                 # "cancelled" is now part of the event contract. Publishing it
                 # used to raise ValidationError inside this try block, which the
                 # handler below then reported as a failure.
-                status="cancelled" if cancelled else "completed",
+                status=terminal_event_status,
                 current_node="end",
                 turn_count=final_state.get("turn_count", 0),
                 total_cost_usd=final_state.get("total_cost_usd", 0.0),
                 passed_scenarios=passed,
                 failed_scenarios=failed,
+                error_message=fatal_error,
             )
         )
 
