@@ -113,7 +113,10 @@ describe('LoginPage', () => {
     const mockPost = vi.mocked(api.post);
     
     // Create error that matches AxiosError check (instanceof AxiosError with response.status === 400)
-    const error: any = new Error('Bad Request');
+    const error = new Error('Bad Request') as Error & {
+      response?: { status: number; data: { detail: string } };
+      isAxiosError?: boolean;
+    };
     error.response = { status: 400, data: { detail: 'Incorrect email or password' } };
     error.isAxiosError = true;
     // Make it pass the `instanceof AxiosError` check by setting constructor name

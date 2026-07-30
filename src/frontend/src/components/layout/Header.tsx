@@ -5,7 +5,10 @@ import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import styles from './Header.module.css';
+import { queryKeys } from '@/lib/queryKeys';
 import { Bell, Search, User, X } from 'lucide-react';
+
+type SearchableRecord = { id: string; name: string; status?: string };
 
 type SearchResult = {
   type: 'agent' | 'evaluation';
@@ -23,15 +26,13 @@ export default function Header() {
 
   // Fetch agents and evaluations for search
   const { data: agents } = useQuery({
-    queryKey: ['agents-search'],
+    queryKey: queryKeys.agents.list(),
     queryFn: async () => { const res = await api.get('/api/v1/agent-configs/'); return res.data; },
-    staleTime: 30000,
   });
 
   const { data: evaluations } = useQuery({
-    queryKey: ['evaluations-search'],
-    queryFn: async () => { const res = await api.get('/api/v1/evaluations/?limit=50'); return res.data; },
-    staleTime: 30000,
+    queryKey: queryKeys.evaluations.list(0, 50),
+    queryFn: async () => { const res = await api.get('/api/v1/evaluations/?skip=0&limit=50'); return res.data; },
   });
 
   // Filter results based on query
@@ -40,17 +41,17 @@ export default function Header() {
     const lowerQuery = query.toLowerCase();
     
     if (Array.isArray(agents)) {
-      agents
-        .filter((a: any) => a.name.toLowerCase().includes(lowerQuery) || a.id.includes(lowerQuery))
+      (agents as SearchableRecord[])
+        .filter((a) => a.name.toLowerCase().includes(lowerQuery) || a.id.includes(lowerQuery))
         .slice(0, 5)
-        .forEach((a: any) => results.push({ type: 'agent', id: a.id, name: a.name }));
+        .forEach((a) => results.push({ type: 'agent', id: a.id, name: a.name }));
     }
-    
+
     if (Array.isArray(evaluations)) {
-      evaluations
-        .filter((e: any) => e.name.toLowerCase().includes(lowerQuery) || e.id.includes(lowerQuery))
+      (evaluations as SearchableRecord[])
+        .filter((e) => e.name.toLowerCase().includes(lowerQuery) || e.id.includes(lowerQuery))
         .slice(0, 5)
-        .forEach((e: any) => results.push({ type: 'evaluation', id: e.id, name: e.name, status: e.status }));
+        .forEach((e) => results.push({ type: 'evaluation', id: e.id, name: e.name, status: e.status }));
     }
   }
 
@@ -69,7 +70,7 @@ export default function Header() {
     setQuery('');
     setIsOpen(false);
     if (result.type === 'agent') {
-      router.push(`/agents`);
+      router.push(`/agents/${result.id}`);
     } else {
       router.push(`/evaluations/${result.id}`);
     }
@@ -81,7 +82,8 @@ export default function Header() {
         <Search size={18} className={styles.searchIcon} />
         <input 
           ref={inputRef}
-          type="text" 
+          type="search"
+          aria-label="Search agents and evaluations"
           placeholder="Search agents, evaluations, or runs..." 
           className={styles.searchInput}
           value={query}
@@ -90,6 +92,8 @@ export default function Header() {
         />
         {query && (
           <button 
+            type="button"
+            aria-label="Clear search"
             onClick={() => { setQuery(''); setIsOpen(false); }}
             style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '4px' }}
           >
@@ -174,7 +178,7 @@ export default function Header() {
       </div>
       
       <div className={styles.actions}>
-        <button className={styles.iconButton}>
+        <button type="button" className={styles.iconButton} aria-label="Notifications">
           <Bell size={20} />
         </button>
         <div className={styles.avatar}>

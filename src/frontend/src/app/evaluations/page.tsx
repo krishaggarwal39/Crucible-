@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Play, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
+import { queryKeys } from '@/lib/queryKeys';
 
 type EvaluationRun = {
   id: string;
@@ -17,9 +18,9 @@ type EvaluationRun = {
 
 export default function EvaluationsPage() {
   const { data: runs, isLoading } = useQuery<EvaluationRun[]>({
-    queryKey: ['evaluations'],
+    queryKey: queryKeys.evaluations.list(0, 100),
     queryFn: async () => {
-      const res = await api.get('/api/v1/evaluations/');
+      const res = await api.get('/api/v1/evaluations/?skip=0&limit=100');
       return res.data;
     },
   });
@@ -29,6 +30,7 @@ export default function EvaluationsPage() {
       case 'completed': return 'var(--success-color)';
       case 'running': return 'var(--primary-color)';
       case 'failed': return 'var(--danger-color)';
+      case 'cancelled': return 'var(--warning-color)';
       default: return 'var(--text-tertiary)';
     }
   };

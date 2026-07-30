@@ -9,7 +9,10 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect } from 'react';
 
-export default function NewAgentPage() {
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
+import { queryKeys } from '@/lib/queryKeys';
+
+function NewAgentForm() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -33,12 +36,12 @@ export default function NewAgentPage() {
   const [jsonError, setJsonError] = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       const res = await api.post('/api/v1/agent-configs/', data);
       return res.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agent-configs'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.all });
       router.push('/agents');
     }
   });
@@ -52,8 +55,10 @@ export default function NewAgentPage() {
       if (formData.tool_definitions.trim()) {
         parsedTools = JSON.parse(formData.tool_definitions);
       }
-    } catch (err: any) {
-      setJsonError(`Invalid JSON in tools: ${err.message}`);
+    } catch (err) {
+      setJsonError(
+        `Invalid JSON in tools: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return;
     }
 
@@ -73,7 +78,7 @@ export default function NewAgentPage() {
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '32px' }}>
-        <Link href="/agents" style={{ display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}>
+        <Link href="/agents" aria-label="Back to agents" style={{ display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}>
           <ArrowLeft size={20} />
         </Link>
         <div>
@@ -86,11 +91,12 @@ export default function NewAgentPage() {
         
         <div style={{ display: 'flex', gap: '24px' }}>
           <div style={{ flex: 2 }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Agent Name *</label>
+            <label htmlFor="name" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Agent Name *</label>
             <input 
               required
               type="text" 
-              name="name"
+              id="name"
+            name="name"
               value={formData.name}
               onChange={handleChange}
               style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
@@ -98,9 +104,10 @@ export default function NewAgentPage() {
             />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Connector Type</label>
+            <label htmlFor="connector_type" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Connector Type</label>
             <select 
-              name="connector_type"
+              id="connector_type"
+            name="connector_type"
               value={formData.connector_type}
               onChange={handleChange}
               style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
@@ -113,9 +120,10 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Endpoint URL</label>
+          <label htmlFor="endpoint_url" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Endpoint URL</label>
           <input 
             type="url" 
+            id="endpoint_url"
             name="endpoint_url"
             value={formData.endpoint_url}
             onChange={handleChange}
@@ -125,9 +133,10 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Description</label>
+          <label htmlFor="description" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Description</label>
           <input 
             type="text" 
+            id="description"
             name="description"
             value={formData.description}
             onChange={handleChange}
@@ -136,8 +145,9 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>System Prompt</label>
+          <label htmlFor="system_prompt" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>System Prompt</label>
           <textarea 
+            id="system_prompt"
             name="system_prompt"
             value={formData.system_prompt}
             onChange={handleChange}
@@ -148,8 +158,9 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Tool Definitions (JSON)</label>
+          <label htmlFor="tool_definitions" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Tool Definitions (JSON)</label>
           <textarea 
+            id="tool_definitions"
             name="tool_definitions"
             value={formData.tool_definitions}
             onChange={handleChange}
@@ -162,9 +173,11 @@ export default function NewAgentPage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Auth Config (Plaintext for now)</label>
+          <label htmlFor="auth_config_plaintext" style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Auth Credential <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>(encrypted at rest)</span></label>
           <input 
-            type="text" 
+            type="password"
+            autoComplete="off"
+            id="auth_config_plaintext"
             name="auth_config_plaintext"
             value={formData.auth_config_plaintext}
             onChange={handleChange}
@@ -197,11 +210,25 @@ export default function NewAgentPage() {
         </div>
         
         {mutation.isError && (
-          <div style={{ color: 'var(--danger-color)', fontSize: '0.875rem', textAlign: 'right' }}>
-            Failed to save configuration.
+          <div role="alert" style={{ color: 'var(--danger-color)', fontSize: '0.875rem', textAlign: 'right' }}>
+            {(() => {
+              const detail = (mutation.error as { response?: { data?: { detail?: unknown } } } | null)
+                ?.response?.data?.detail;
+              return typeof detail === 'string' ? detail : 'Failed to save configuration.';
+            })()}
           </div>
         )}
       </form>
     </div>
+  );
+}
+
+export default function NewAgentPage() {
+  // Admin-only page: wrapped like every other route instead of relying solely on
+  // a useEffect redirect that lets content render first.
+  return (
+    <ProtectedRoute>
+      <NewAgentForm />
+    </ProtectedRoute>
   );
 }

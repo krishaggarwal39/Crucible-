@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api, setAccessToken } from '@/lib/api';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 
 type User = {
@@ -33,7 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const res = await api.get<{id: string; email: string; full_name: string | null; tenant_id: string; role: 'admin' | 'member'}>('/api/v1/auth/me');
         setUser(res.data);
-      } catch (err) {
+      } catch {
         setUser(null);
       } finally {
         setIsLoading(false);

@@ -3,10 +3,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import Link from 'next/link';
-import { Plus, Bot, MoreVertical } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Plus, Bot } from 'lucide-react';
+import { useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
+
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
+import { queryKeys } from '@/lib/queryKeys';
 
 type AgentConfig = {
   id: string;
@@ -16,7 +19,7 @@ type AgentConfig = {
   created_at: string;
 };
 
-export default function AgentsPage() {
+function AgentsList() {
   const { user } = useAuth();
   const router = useRouter();
 
@@ -27,7 +30,7 @@ export default function AgentsPage() {
   }, [user, router]);
 
   const { data: agents, isLoading, error } = useQuery<AgentConfig[]>({
-    queryKey: ['agent-configs'],
+    queryKey: queryKeys.agents.list(),
     queryFn: async () => {
       const { data } = await api.get('/api/v1/agent-configs/');
       return data;
@@ -89,9 +92,6 @@ export default function AgentsPage() {
                     </div>
                   </div>
                 </div>
-                <button style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
-                  <MoreVertical size={20} />
-                </button>
               </div>
               
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '24px', flex: 1 }}>
@@ -117,5 +117,16 @@ export default function AgentsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function AgentsPage() {
+  // Wrapped in ProtectedRoute like every other page. This page and /agents/new
+  // relied solely on a useEffect role redirect, so content rendered before the
+  // redirect fired.
+  return (
+    <ProtectedRoute>
+      <AgentsList />
+    </ProtectedRoute>
   );
 }

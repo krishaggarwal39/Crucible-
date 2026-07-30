@@ -4,6 +4,11 @@
   --bg-color: #ffffff;
   --bg-surface: #f9fafb;
   --bg-card: #ffffff;
+  /* Component channels for the same colour, so it can be used inside rgba().
+     `rgba(var(--bg-card), 0.7)` is invalid CSS when --bg-card holds a hex
+     value — the whole declaration gets discarded, which is why the glass
+     panels had no background tint. */
+  --bg-card-rgb: 255, 255, 255;
   --text-primary: #111827;
   --text-secondary: #4b5563;
   --text-tertiary: #9ca3af;
@@ -36,6 +41,7 @@
     --bg-color: #0b0f19;
     --bg-surface: #111827;
     --bg-card: #1f2937;
+    --bg-card-rgb: 31, 41, 55;
     --text-primary: #f9fafb;
     --text-secondary: #d1d5db;
     --text-tertiary: #6b7280;
@@ -79,7 +85,7 @@ button {
 
 /* Glassmorphism utility */
 .glass {
-  background: rgba(var(--bg-card), 0.7);
+  background: rgba(var(--bg-card-rgb), 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.05);
@@ -93,6 +99,47 @@ button {
 
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* Spinner.
+   Six components render <Loader2 className="animate-spin" />. Tailwind is not
+   installed and nothing defined this class, so every loading spinner rendered
+   as a static icon. */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin {
+    animation-duration: 2.5s;
+  }
+  .animate-fade-in {
+    animation: none;
+  }
+}
+
+/* Visible focus ring for keyboard navigation. */
+:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* Screen-reader-only helper for labelling icon-only controls. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* Scrollbar */
