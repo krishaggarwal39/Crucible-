@@ -1,16 +1,22 @@
 name: Crucible CI
 
+# Runs on every branch, not just main. Previously `branches: [main]` meant work
+# on any feature branch was never checked, so lint and test regressions only
+# surfaced at merge time.
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint-and-test:
+  backend:
+    name: Backend (lint + tests)
     runs-on: ubuntu-latest
-    
-    # Setup services needed for integration tests
+
     services:
       postgres:
         image: postgres:16-alpine
@@ -25,7 +31,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-          
+
       redis:
         image: redis:7-alpine
         ports:
@@ -36,36 +42,113 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      POSTGRES_USER: crucible_test
+      POSTGRES_PASSWORD: test_password
+      # conftest.py appends _test if absent and refuses to run against a
+      # non-test database, since the suite truncates tables.
+      POSTGRES_DB: crucible_test_db
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      APP_ENV: test
+      JWT_SECRET_KEY: test_secret_key_ci
+      PYTHONPATH: ${{ github.workspace }}/src
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-        
-    - name: Install uv
-      run: curl -LsSf https://astral.sh/uv/install.sh | sh
-        
-    - name: Install dependencies
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv pip install --system -e ".[dev]"
-        
-    - name: Lint with Ruff
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv run ruff check src/backend/
-        
-    - name: Run Pytest Integration Suite
-      env:
-        POSTGRES_USER: crucible_test
-        POSTGRES_PASSWORD: test_password
-        POSTGRES_DB: crucible_test_db
-        POSTGRES_HOST: localhost
-        REDIS_HOST: localhost
-        JWT_SECRET_KEY: test_secret_key_ci
-        CREDENTIAL_ENCRYPTION_KEY: DnjsXhGMp_p183WMlvhEGEbZGXh5AusuPvDv7a4FAkg=
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv run pytest tests/ -v
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      # Generated per run rather than committing a real Fernet key to the repo.
+      - name: Generate ephemeral encryption key
+        run: |
+          echo "CREDENTIAL_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+
+      # Widened from src/backend only, so test code is linted too.
+      - name: Lint with Ruff
+        run: ruff check src/ tests/
+
+      - name: Verify migrations match models
+        env:
+          CREDENTIAL_ENCRYPTION_KEY: ${{ env.CREDENTIAL_ENCRYPTION_KEY }}
+        run: |
+          # Bring the schema up, then assert autogenerate finds nothing new.
+          # This is the check that would have caught the agent_configs cascade
+          # drifting away from the model for months.
+          alembic upgrade head
+          alembic check
+
+      - name: Verify migrations are reversible
+        run: |
+          alembic downgrade -1
+          alembic upgrade head
+
+      - name: Run Pytest suite
+        run: pytest tests/ -v
+
+  frontend:
+    name: Frontend (lint + typecheck + tests + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # None of these ran in CI before: there was no frontend job at all.
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t crucible-backend:ci .
+
+      - name: Build frontend image
+        run: docker build -t crucible-frontend:ci ./src/frontend
+
+      - name: Validate compose files
+        env:
+          POSTGRES_PASSWORD: ci_password
+          MINIO_ROOT_USER: ci_admin
+          MINIO_ROOT_PASSWORD: ci_password
+          JWT_SECRET_KEY: ci_secret
+          CREDENTIAL_ENCRYPTION_KEY: ci_placeholder_key
+        run: |
+          docker compose -f docker-compose.yml config >/dev/null
+          docker compose -f docker-compose.prod.yml config >/dev/null
