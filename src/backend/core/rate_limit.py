@@ -12,7 +12,6 @@ Configuration:
 """
 
 import logging
-import time
 
 import redis.asyncio as aioredis
 from fastapi import Request, Response
@@ -31,8 +30,17 @@ RATE_LIMITS = {
     "default": {"max_requests": 60, "window_seconds": 60},
 }
 
-# Paths exempt from rate limiting
-EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+# Paths exempt from rate limiting.
+# Note the API's real OpenAPI path is /api/v1/openapi.json — listing a bare
+# "/openapi.json" exempted a route that does not exist, so the schema endpoint
+# was silently consuming the default tier.
+EXEMPT_PATHS = {
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/v1/openapi.json",
+}
 
 
 def _get_tier(path: str) -> str | None:
@@ -45,11 +53,27 @@ def _get_tier(path: str) -> str | None:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP, respecting X-Forwarded-For behind a reverse proxy."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # Take the first IP (original client) from the chain
-        return forwarded.split(",")[0].strip()
+    """
+    Determine the client identity used for rate limiting.
+
+    X-Forwarded-For is only consulted when TRUSTED_PROXY_COUNT > 0, and then we
+    take the hop *our* trusted proxy appended rather than the first entry.
+
+    Taking the first entry unconditionally let any caller choose its own
+    rate-limit bucket by sending a forged header — verified as a complete bypass
+    of the login limiter. nginx appends rather than replaces, so the leftmost
+    value is attacker-controlled even behind the real proxy.
+    """
+    trusted = settings.TRUSTED_PROXY_COUNT
+    if trusted > 0:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+            if hops:
+                # The rightmost `trusted` entries were added by infrastructure we
+                # control; the one just before them is the real peer.
+                index = max(0, len(hops) - trusted)
+                return hops[index]
     return request.client.host if request.client else "unknown"
 
 

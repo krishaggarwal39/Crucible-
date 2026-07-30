@@ -6,9 +6,13 @@ from typing import Protocol
 import redis.asyncio as aioredis
 from pydantic import ValidationError
 
-from backend.schemas.events import BaseEvent, EvaluationEventV1
+from backend.schemas.events import EvaluationEventV1
 from backend.core.config import get_settings
-from backend.core.telemetry import events_published_total, events_dropped_total, events_publish_duration
+from backend.core.telemetry import (
+    get_events_dropped_total,
+    get_events_publish_duration,
+    get_events_published_total,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -73,7 +77,8 @@ class RedisEventPublisher:
             return []
 
     async def close(self):
-        await self.redis.close()
+        # .close() is deprecated in redis-py 5.x in favour of .aclose().
+        await self.redis.aclose()
 
 
 class EventBus:
@@ -100,17 +105,20 @@ class EventBus:
             if hasattr(self.publisher, "store_for_replay"):
                 await self.publisher.store_for_replay(event.run_id, payload)
             
-            # Metrics: Success
-            events_published_total.add(1, {"event_type": "EvaluationEventV1", "status": event.status})
+            # Metrics: Success. Resolved on use so they bind to the real
+            # MeterProvider rather than the no-op default present at import time.
+            get_events_published_total().add(
+                1, {"event_type": "EvaluationEventV1", "status": event.status}
+            )
             duration = time.perf_counter() - start_time
-            events_publish_duration.record(duration)
-            
+            get_events_publish_duration().record(duration)
+
         except ValidationError as ve:
             logger.error(f"Schema validation failed before publish: {ve}")
-            events_dropped_total.add(1, {"reason": "validation_error"})
+            get_events_dropped_total().add(1, {"reason": "validation_error"})
         except Exception as e:
             logger.error(f"EventBus publish failed: {e}")
-            events_dropped_total.add(1, {"reason": "transport_error"})
+            get_events_dropped_total().add(1, {"reason": "transport_error"})
             
     async def close(self):
         if hasattr(self.publisher, "close"):

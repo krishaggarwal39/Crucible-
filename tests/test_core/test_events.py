@@ -3,8 +3,7 @@ Tests for the EventBus and Redis publisher.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-from datetime import datetime, timezone
+from unittest.mock import patch, AsyncMock
 
 from backend.core.events import EventBus, RedisEventPublisher
 from backend.schemas.events import EvaluationEventV1

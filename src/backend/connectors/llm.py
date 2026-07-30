@@ -22,6 +22,15 @@ class LLMClient:
         self.fallbacks = settings.FALLBACK_MODELS
         # Disable litellm telemetry
         litellm.telemetry = False
+        self._instructor_client = None
+
+    def _get_instructor_client(self):
+        """Build the Instructor wrapper once instead of on every structured call."""
+        if self._instructor_client is None:
+            import instructor
+
+            self._instructor_client = instructor.from_litellm(litellm.acompletion)
+        return self._instructor_client
 
     def _estimate_tokens(self, model: str, messages: List[Dict[str, str]]) -> int:
         """Pre-flight check to prevent sending payloads that exceed context window."""
@@ -41,16 +50,40 @@ class LLMClient:
         num_tokens += 2
         return num_tokens
 
-    def check_context_window(self, model: str, messages: List[Dict[str, str]], max_tokens_out: int) -> None:
+    DEFAULT_MAX_CONTEXT = 128000
+
+    def _lookup_model_info(self, model: str) -> Dict[str, Any]:
+        """Look up litellm's registry by full name, then by bare model name."""
+        info = litellm.model_cost.get(model)
+        if info is None:
+            info = litellm.model_cost.get(model.split("/")[-1])
+        return info or {}
+
+    def check_context_window(
+        self, model: str, messages: List[Dict[str, str]], max_tokens_out: int
+    ) -> None:
+        """
+        Pre-flight guard against over-long prompts.
+
+        Note on the field name: in litellm's registry `max_tokens` is the maximum
+        *output* length, while `max_input_tokens` is the context window. Reading
+        `max_tokens` here meant the check compared against, for example, 16384 for
+        gpt-4o instead of its real 128000 context — rejecting payloads roughly 8x
+        under the true limit.
+        """
         num_tokens = self._estimate_tokens(model, messages)
-        model_info = litellm.model_cost.get(model, {})
-        # Fallback to 128k if unknown
-        max_context = model_info.get("max_tokens", 128000)
+        model_info = self._lookup_model_info(model)
+
+        max_context = (
+            model_info.get("max_input_tokens")
+            or model_info.get("max_tokens")
+            or self.DEFAULT_MAX_CONTEXT
+        )
 
         if num_tokens + max_tokens_out > max_context:
             raise ContextWindowExceededError(
                 f"Estimated input tokens ({num_tokens}) + requested max_tokens ({max_tokens_out}) "
-                f"exceeds model {model} limit ({max_context})"
+                f"exceeds model {model} context window ({max_context})"
             )
 
     @retry(
@@ -70,8 +103,7 @@ class LLMClient:
         try:
             response_model = kwargs.pop("response_model", None)
             if response_model:
-                import instructor
-                client = instructor.from_litellm(litellm.acompletion)
+                client = self._get_instructor_client()
                 parsed, response = await client.chat.completions.create_with_completion(
                     model=model,
                     messages=messages,

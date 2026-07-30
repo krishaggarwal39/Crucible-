@@ -3,13 +3,12 @@ Tests for the Analyzer node (behavioral drift detection).
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 import numpy as np
 
 from backend.agents.analyzer import (
     analyze_drift_node,
     _process_single_trace,
-    _resolve_baseline,
     _compute_drift_math,
 )
 
@@ -43,11 +42,34 @@ class TestComputeDriftMath:
         assert result["score"] == 1.0
         assert result["band"] == "Significant Drift"
 
-    def test_no_overlap_returns_error(self):
+    def test_no_overlap_reports_insufficient_overlap(self):
+        """
+        No shared scenarios is a reportable state, not an error. The previous
+        implementation had two conflicting branches for this, one unreachable.
+        """
         current = {"s1": [0.1] * 1536}
         baseline = [{"scenario_id": "s99", "vector": [0.1] * 1536}]
         result = _compute_drift_math(current, baseline)
-        assert "error" in result
+        assert result["status"] == "insufficient_overlap"
+        assert result["score"] is None
+        assert result["overlap_count"] == 0
+
+    def test_thin_overlap_is_flagged_low_confidence(self):
+        """A comparison built on very few scenarios must not look authoritative."""
+        vec = [0.1] * 1536
+        current = {f"s{i}": vec for i in range(6)}
+        baseline = [{"scenario_id": "s0", "vector": vec}]
+        result = _compute_drift_math(current, baseline)
+        assert result["status"] == "success"
+        assert result["confidence"] == "low"
+        assert result["overlap_count"] == 1
+
+    def test_zero_magnitude_vectors_do_not_crash(self):
+        """A zero vector would previously divide by zero."""
+        current = {"s1": [0.0] * 1536}
+        baseline = [{"scenario_id": "s1", "vector": [0.0] * 1536}]
+        result = _compute_drift_math(current, baseline)
+        assert result["status"] == "insufficient_overlap"
 
     def test_minor_drift_band(self):
         """Vectors with ~0.85 cosine similarity should be Minor Drift."""

@@ -1,10 +1,12 @@
+import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
+from cryptography.fernet import Fernet
 from passlib.context import CryptContext
-import asyncio
 
 from backend.core.config import get_settings
 
@@ -13,10 +15,20 @@ logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Token "type" claim values. Access and refresh tokens are signed with the same
+# key, so the type claim is the only thing that stops a long-lived refresh token
+# from being replayed as a short-lived access token.
+TOKEN_TYPE_ACCESS = "access"
+TOKEN_TYPE_REFRESH = "refresh"
+
+
+class TokenTypeError(Exception):
+    """Raised when a token is structurally valid but is of the wrong type."""
+
 
 def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
     """
-    Generate a JWT token for a given subject (user ID).
+    Generate a short-lived JWT access token for a given subject (user ID).
     """
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -24,22 +36,58 @@ def create_access_token(subject: str | Any, expires_delta: timedelta | None = No
         expire = datetime.now(timezone.utc) + timedelta(
             minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
         )
-    
-    to_encode = {"exp": expire, "sub": str(subject)}
+
+    to_encode = {
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "sub": str(subject),
+        "type": TOKEN_TYPE_ACCESS,
+    }
     encoded_jwt = jwt.encode(
         to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
     )
     return encoded_jwt
 
+
 def create_refresh_token(subject: str | Any) -> str:
     """
     Generate a long-lived JWT refresh token.
     """
-    expire = datetime.now(timezone.utc) + timedelta(days=7) # 7 days
-    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh"}
+    expire = datetime.now(timezone.utc) + timedelta(
+        days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
+    )
+    to_encode = {
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "sub": str(subject),
+        "type": TOKEN_TYPE_REFRESH,
+    }
     return jwt.encode(
         to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
     )
+
+
+def decode_token(token: str, expected_type: str = TOKEN_TYPE_ACCESS) -> dict[str, Any]:
+    """
+    Decode and verify a JWT, additionally enforcing the "type" claim.
+
+    Raises jwt.PyJWTError for signature/expiry problems and TokenTypeError when
+    the token is valid but of the wrong kind (e.g. a refresh token presented on
+    an access-token code path).
+
+    Tokens minted before the "type" claim existed are treated as access tokens
+    so that existing sessions keep working; refresh tokens have always carried
+    type="refresh", so they are still correctly rejected here.
+    """
+    payload = jwt.decode(
+        token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+    )
+    token_type = payload.get("type", TOKEN_TYPE_ACCESS)
+    if token_type != expected_type:
+        raise TokenTypeError(
+            f"Expected a {expected_type} token but received a {token_type} token."
+        )
+    return payload
 
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -48,7 +96,9 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     try:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, pwd_context.verify, plain_password, hashed_password)
+        return await loop.run_in_executor(
+            None, pwd_context.verify, plain_password, hashed_password
+        )
     except ValueError as e:
         logger.warning(f"Invalid password hash format: {e}")
         return False
@@ -72,31 +122,26 @@ async def get_password_hash(password: str) -> str:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, pwd_context.hash, password)
 
-from cryptography.fernet import Fernet
-import json
 
-_fernet_instance = None
+# ── Credential encryption ────────────────────────────────────────────────────
 
-import base64
+_fernet_instance: Fernet | None = None
+
 
 def _get_fernet() -> Fernet:
+    """
+    Return the process-wide Fernet instance.
+
+    The key is validated by Settings at startup, so there is deliberately no
+    fallback that pads/truncates a malformed key. The previous fallback silently
+    derived a *different* key from bad input, which made every credential
+    encrypted under the intended key permanently undecryptable with no error.
+    """
     global _fernet_instance
     if _fernet_instance is None:
-        key_str = settings.CREDENTIAL_ENCRYPTION_KEY
-        
-        # Try to use the key directly (expected: a Fernet.generate_key() output)
-        try:
-            _fernet_instance = Fernet(key_str.encode('utf-8'))
-        except (ValueError, Exception):
-            # Fallback: treat as a raw 32-byte key and base64-encode it
-            key_bytes = key_str.encode('utf-8')
-            if len(key_bytes) < 32:
-                key_bytes = key_bytes.ljust(32, b'0')
-            elif len(key_bytes) > 32:
-                key_bytes = key_bytes[:32]
-            _fernet_instance = Fernet(base64.urlsafe_b64encode(key_bytes))
-            
+        _fernet_instance = Fernet(settings.CREDENTIAL_ENCRYPTION_KEY.encode("utf-8"))
     return _fernet_instance
+
 
 def encrypt_credentials(credentials: dict | str) -> str:
     """
@@ -110,6 +155,7 @@ def encrypt_credentials(credentials: dict | str) -> str:
         payload = credentials
     return f.encrypt(payload.encode("utf-8")).decode("utf-8")
 
+
 def decrypt_credentials(encrypted_data: str, as_dict: bool = True) -> dict | str:
     """
     Decrypts a base64-encoded encrypted string back to a dictionary or string.
@@ -120,3 +166,63 @@ def decrypt_credentials(encrypted_data: str, as_dict: bool = True) -> dict | str
     if as_dict:
         return json.loads(payload)
     return payload
+
+
+def extract_bearer_token(auth_config_encrypted: str | None) -> str | None:
+    """
+    Decrypt a stored agent auth config and pull out a bearer token.
+
+    Accepts the shapes the API actually stores:
+      - {"bearer_token": "..."} / {"token": "..."} / {"api_key": "..."}
+      - a bare string, optionally already prefixed with "Bearer "
+
+    Returns None when there is nothing usable, so callers can fall back to an
+    unauthenticated request rather than failing the whole simulation.
+    """
+    if not auth_config_encrypted:
+        return None
+    try:
+        decrypted = decrypt_credentials(auth_config_encrypted, as_dict=False)
+    except Exception as e:
+        # Never log the ciphertext or key material.
+        logger.error(f"Failed to decrypt agent auth config: {type(e).__name__}")
+        return None
+
+    token: str | None = None
+    try:
+        parsed = json.loads(decrypted)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+
+    if isinstance(parsed, dict):
+        for key in ("bearer_token", "token", "api_key", "authorization"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                token = value.strip()
+                break
+    elif isinstance(decrypted, str) and decrypted.strip():
+        token = decrypted.strip()
+
+    if not token:
+        return None
+    # Stored values are often pasted as "Bearer sk-..." — strip the scheme so the
+    # connector does not emit "Bearer Bearer sk-...".
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return token or None
+
+
+__all__ = [
+    "TOKEN_TYPE_ACCESS",
+    "TOKEN_TYPE_REFRESH",
+    "TokenTypeError",
+    "create_access_token",
+    "create_refresh_token",
+    "decode_token",
+    "verify_password",
+    "dummy_verify",
+    "get_password_hash",
+    "encrypt_credentials",
+    "decrypt_credentials",
+    "extract_bearer_token",
+]

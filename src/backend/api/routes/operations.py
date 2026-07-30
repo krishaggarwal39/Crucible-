@@ -3,7 +3,7 @@ AI Operations API routes — drift analytics and system health metrics.
 """
 
 import logging
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,15 +75,14 @@ async def get_operations_summary(
     """
     tenant_id = current_user.tenant_id
 
-    # Average drift score across all runs with drift data
+    # Mean *judgment* score across runs that have drift data.
     stmt_avg = select(func.avg(EvaluationRun.avg_score)).where(
         EvaluationRun.tenant_id == tenant_id,
         EvaluationRun.status == "completed",
         EvaluationRun.drift_profile.isnot(None),
     )
-    avg_score = (await db.execute(stmt_avg)).scalar()
+    avg_quality_score = (await db.execute(stmt_avg)).scalar()
 
-    # Count anomalous runs (drift score > 0.25)
     stmt_runs = select(EvaluationRun).where(
         EvaluationRun.tenant_id == tenant_id,
         EvaluationRun.status == "completed",
@@ -92,22 +91,34 @@ async def get_operations_summary(
     result = await db.execute(stmt_runs)
     all_drift_runs = result.scalars().all()
 
-    anomalous_count = sum(
-        1
+    # The real mean drift score, read from the drift profiles themselves.
+    drift_scores = [
+        r.drift_profile["score"]
         for r in all_drift_runs
-        if r.drift_profile and r.drift_profile.get("score", 0) > 0.25
+        if r.drift_profile and isinstance(r.drift_profile.get("score"), (int, float))
+    ]
+    avg_drift_score = (
+        round(sum(drift_scores) / len(drift_scores), 4) if drift_scores else None
     )
+
+    # Count anomalous runs (drift score > 0.25)
+    anomalous_count = sum(1 for s in drift_scores if s > 0.25)
 
     # Baseline stability — how many agents have a pinned baseline
     stmt_baselines = select(func.count(EvaluationRun.id)).where(
         EvaluationRun.tenant_id == tenant_id,
-        EvaluationRun.is_baseline == True,
+        EvaluationRun.is_baseline.is_(True),
     )
     baseline_count = (await db.execute(stmt_baselines)).scalar() or 0
 
     return {
-        "avg_drift_score": round(avg_score, 1) if avg_score else None,
+        # Previously `avg_drift_score` was computed from EvaluationRun.avg_score —
+        # the judge's quality score, not drift at all. Both are now reported
+        # under accurate names.
+        "avg_drift_score": avg_drift_score,
+        "avg_quality_score": round(avg_quality_score, 1) if avg_quality_score else None,
         "anomalous_runs": anomalous_count,
         "total_drift_runs": len(all_drift_runs),
+        "drift_alert_count": anomalous_count,
         "baseline_count": baseline_count,
     }

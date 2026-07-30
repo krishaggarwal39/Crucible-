@@ -31,8 +31,12 @@ async def test_create_agent_config_success(mocker):
         auth_config_plaintext="Bearer sk-test123",
     )
 
+    # db.add is synchronous — leaving it as an AsyncMock produced an
+    # un-awaited-coroutine RuntimeWarning on every run.
+    mock_db.add = MagicMock()
+
     with patch("backend.api.routes.agent_config.encrypt_credentials", return_value="encrypted_blob"):
-        result = await create_agent_config(
+        await create_agent_config(
             config_in=config_in,
             current_user=current_user,
             db=mock_db,
@@ -46,9 +50,10 @@ async def test_create_agent_config_success(mocker):
 @pytest.mark.asyncio
 async def test_create_agent_config_no_auth():
     """Config without auth should still work (auth_config_encrypted = None)."""
-    from unittest.mock import AsyncMock, Mock
+    from unittest.mock import Mock
 
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     tenant_id = uuid.uuid4()
     user_id = uuid.uuid4()
     current_user = Mock(tenant_id=tenant_id, id=user_id)
@@ -58,7 +63,7 @@ async def test_create_agent_config_no_auth():
         connector_type=ConnectorType.SDK,
     )
 
-    result = await create_agent_config(
+    await create_agent_config(
         config_in=config_in,
         current_user=current_user,
         db=mock_db,

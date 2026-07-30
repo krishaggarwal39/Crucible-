@@ -4,7 +4,6 @@ Tests for the Evolution node (system prompt improvement suggestions).
 
 import pytest
 from unittest.mock import patch, AsyncMock
-from pydantic import BaseModel
 
 from backend.agents.evolution import evolution_node, EvolutionSuggestion
 

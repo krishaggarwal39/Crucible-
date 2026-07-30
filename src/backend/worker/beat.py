@@ -12,48 +12,67 @@ settings = get_settings()
 
 async def _sweep_zombie_runs_async():
     """
-    Finds running tasks where the last heartbeat was more than 5 minutes ago
-    and marks them as failed atomically.
+    Finds running tasks whose heartbeat has gone stale and marks them failed.
+
+    Two cases are covered:
+      1. The run heartbeated at least once, then stopped.
+      2. The run never heartbeated at all (it died inside the first interval).
+
+    Case 2 was previously unreachable: it keys off started_at, which nothing in
+    the codebase ever wrote, so the comparison was always NULL and never matched.
+    started_at is now set when the run is claimed, and COALESCE falls back to
+    created_at so rows written before that fix are still swept.
     """
-    from sqlalchemy import update
+    from sqlalchemy import func, or_, update
+
     timeout_secs = settings.ZOMBIE_TIMEOUT_SECONDS
     logger.info(f"Sweeping for zombie evaluation runs (timeout: {timeout_secs}s)...")
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=timeout_secs)
-    
+
     async with AsyncSessionLocal() as session:
-        # Atomic update for runs that had a heartbeat but timed out
+        # Runs that had a heartbeat but timed out
         stmt1 = (
             update(EvaluationRun)
             .where(
                 EvaluationRun.status == "running",
-                EvaluationRun.last_heartbeat_at < cutoff
+                EvaluationRun.last_heartbeat_at < cutoff,
             )
             .values(
                 status="failed",
-                error_message="Task failed: Worker died or heartbeat lost."
+                error_message="Task failed: Worker died or heartbeat lost.",
+                completed_at=now,
             )
         )
         result1 = await session.execute(stmt1)
-        
-        # Atomic update for runs that started but never heartbeated
+
+        # Runs that never heartbeated at all
         stmt2 = (
             update(EvaluationRun)
             .where(
                 EvaluationRun.status == "running",
                 EvaluationRun.last_heartbeat_at.is_(None),
-                EvaluationRun.started_at < cutoff
+                or_(
+                    func.coalesce(
+                        EvaluationRun.started_at, EvaluationRun.created_at
+                    ) < cutoff,
+                ),
             )
             .values(
                 status="failed",
-                error_message=f"Task failed: No heartbeat received within {timeout_secs} seconds."
+                error_message=(
+                    f"Task failed: No heartbeat received within {timeout_secs} seconds."
+                ),
+                completed_at=now,
             )
         )
         result2 = await session.execute(stmt2)
-        
+
         if result1.rowcount > 0 or result2.rowcount > 0:
             await session.commit()
-            logger.info(f"Marked {result1.rowcount + result2.rowcount} zombie runs as failed.")
+            logger.info(
+                f"Marked {result1.rowcount + result2.rowcount} zombie runs as failed."
+            )
 
 
 async def _cleanup_orphaned_traces_async():

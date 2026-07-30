@@ -15,15 +15,13 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import inspect, pool, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import inspect, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
 from backend.db.models import (
     AgentConfig,
     EvaluationRun,
-    GoldenBaseline,
     Judgment,
     Scenario,
     Tenant,
