@@ -9,7 +9,11 @@ import { useRouter } from 'next/navigation';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { queryKeys } from '@/lib/queryKeys';
 
+type DriftMethod = 'paired' | 'centroid' | null;
+
 type DriftPoint = {
+  method?: DriftMethod;
+  confidence?: string | null;
   run_id: string;
   run_name: string;
   drift_score: number;
@@ -50,7 +54,10 @@ function DriftTooltip({
         Drift: {(data.drift_score * 100).toFixed(1)}% ({data.band})
       </p>
       <p style={{ margin: '4px 0 0 0', color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
-        {data.overlap_count} overlapping scenarios
+        {data.method === 'centroid'
+          ? 'Distribution-level comparison (no shared scenarios)'
+          : `${data.overlap_count} matched scenarios`}
+        {data.confidence === 'low' ? ' · low confidence' : ''}
       </p>
     </div>
   );
@@ -128,6 +135,8 @@ export default function OperationsPage() {
           <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '4px' }}>Behavioral Drift by Run</h2>
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', marginBottom: '20px' }}>
             Each point is one completed run, most recent first. The x axis is run order, not elapsed time.
+            Scenarios are regenerated per run, so most comparisons are distribution-level
+            rather than scenario-matched — hover a point to see which.
           </p>
           
           {isLoading ? (

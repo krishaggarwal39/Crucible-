@@ -28,6 +28,7 @@ class TestComputeDriftMath:
         ]
         result = _compute_drift_math(current, baseline)
         assert result["status"] == "success"
+        assert result["method"] == "paired"
         assert result["score"] == 0.0
         assert result["band"] == "Stable"
         assert result["overlap_count"] == 5
@@ -42,17 +43,51 @@ class TestComputeDriftMath:
         assert result["score"] == 1.0
         assert result["band"] == "Significant Drift"
 
-    def test_no_overlap_reports_insufficient_overlap(self):
+    def test_no_overlap_falls_back_to_centroid_comparison(self):
         """
-        No shared scenarios is a reportable state, not an error. The previous
-        implementation had two conflicting branches for this, one unreachable.
+        Scenario ids are freshly generated uuid4s on every run, so two independent
+        runs NEVER share one and the paired overlap is always zero by
+        construction. Keying drift solely on scenario_id meant it could never
+        produce a number. The centroid fallback still yields a real measurement,
+        flagged with its own method and low confidence.
         """
         current = {"s1": [0.1] * 1536}
         baseline = [{"scenario_id": "s99", "vector": [0.1] * 1536}]
         result = _compute_drift_math(current, baseline)
-        assert result["status"] == "insufficient_overlap"
-        assert result["score"] is None
+        assert result["status"] == "success"
+        assert result["method"] == "centroid"
+        assert result["score"] == 0.0          # identical vectors, different ids
         assert result["overlap_count"] == 0
+        assert result["confidence"] == "low"
+        assert "regenerated" in result["reason"]
+
+    def test_centroid_detects_a_real_behavioural_shift(self):
+        """Orthogonal populations with no id overlap must still register drift."""
+        a = [1.0] + [0.0] * 1535
+        b = [0.0, 1.0] + [0.0] * 1534
+        current = {f"new{i}": a for i in range(3)}
+        baseline = [{"scenario_id": f"old{i}", "vector": b} for i in range(3)]
+        result = _compute_drift_math(current, baseline)
+        assert result["status"] == "success"
+        assert result["method"] == "centroid"
+        assert result["score"] == pytest.approx(1.0)
+        assert result["band"] == "Significant Drift"
+        assert result["current_sample_size"] == 3
+        assert result["baseline_sample_size"] == 3
+
+    def test_dimension_mismatch_is_reported_clearly(self):
+        """Changing the embedding model must not silently corrupt the comparison."""
+        current = {"s1": [0.1] * 768}
+        baseline = [{"scenario_id": "s9", "vector": [0.1] * 1536}]
+        result = _compute_drift_math(current, baseline)
+        assert result["status"] == "dimension_mismatch"
+        assert result["score"] is None
+        assert "EMBEDDING_DIMENSIONS" in result["reason"]
+
+    def test_empty_inputs_report_insufficient_data(self):
+        assert _compute_drift_math({}, [{"scenario_id": "s", "vector": [0.1] * 4}])["status"] \
+            == "insufficient_data"
+        assert _compute_drift_math({"s": [0.1] * 4}, [])["status"] == "insufficient_data"
 
     def test_thin_overlap_is_flagged_low_confidence(self):
         """A comparison built on very few scenarios must not look authoritative."""
@@ -69,7 +104,8 @@ class TestComputeDriftMath:
         current = {"s1": [0.0] * 1536}
         baseline = [{"scenario_id": "s1", "vector": [0.0] * 1536}]
         result = _compute_drift_math(current, baseline)
-        assert result["status"] == "insufficient_overlap"
+        assert result["status"] == "insufficient_data"
+        assert result["score"] is None
 
     def test_minor_drift_band(self):
         """Vectors with ~0.85 cosine similarity should be Minor Drift."""
@@ -86,14 +122,15 @@ class TestComputeDriftMath:
         # Score should be between 0.1 and 0.25 for Minor Drift
         assert result["band"] in ["Minor Drift", "Significant Drift", "Stable"]
 
-    def test_insufficient_overlap_warning(self):
-        """Less than 5 overlapping scenarios with 5+ current should warn."""
+    def test_thin_paired_overlap_still_prefers_paired(self):
+        """One shared scenario is enough to use the stronger paired method."""
         vec = [0.1] * 1536
         current = {f"s{i}": vec for i in range(5)}
-        baseline = [{"scenario_id": "s0", "vector": vec}]  # Only 1 overlap
+        baseline = [{"scenario_id": "s0", "vector": vec}]  # only 1 overlap
         result = _compute_drift_math(current, baseline)
-        # Should still compute but may flag insufficient_overlap
-        assert result["status"] in ["success", "insufficient_overlap"]
+        assert result["status"] == "success"
+        assert result["method"] == "paired"
+        assert result["confidence"] == "low"
 
 
 class TestProcessSingleTrace:

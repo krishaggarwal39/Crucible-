@@ -58,6 +58,7 @@ async def _process_single_trace(meta: dict, tenant_id: str, run_id: str) -> dict
         emb_res = await llm_client.embed(
             model=settings.DEFAULT_EMBEDDING_MODEL,
             input_text=summary_text,
+            dimensions=settings.EMBEDDING_DIMENSIONS,
         )
         vector = emb_res["vector"]
 
@@ -129,70 +130,135 @@ async def _resolve_baseline(tenant_id: str, agent_id: str, run_id: str) -> str |
     return None
 
 
+def _cosine(a, b) -> float | None:
+    v1 = np.asarray(a, dtype=float)
+    v2 = np.asarray(b, dtype=float)
+    denom = float(np.linalg.norm(v1) * np.linalg.norm(v2))
+    if denom == 0.0:
+        return None
+    return float(np.dot(v1, v2) / denom)
+
+
+def _band(drift_score: float) -> str:
+    if drift_score < 0.1:
+        return "Stable"
+    if drift_score < 0.25:
+        return "Minor Drift"
+    return "Significant Drift"
+
+
 def _compute_drift_math(current_vectors: dict, baseline_vectors: list) -> dict:
     """
-    Cosine-similarity drift between this run and its baseline.
+    Behavioural drift between this run and its baseline.
 
-    The previous branching made one arm unreachable and reported
-    "insufficient_overlap" only when the overlap was exactly zero.
+    Two methods, in order of preference:
+
+    "paired" — cosine distance per shared scenario_id, averaged. This is the
+    strongest signal because it compares like with like, but it only applies when
+    the two runs actually share scenario ids.
+
+    "centroid" — cosine distance between the mean embedding of each run. Used
+    when there is no scenario overlap.
+
+    Why the fallback is necessary: the generator mints a fresh uuid4 for every
+    scenario on every run, so two independent runs never share a scenario_id and
+    the paired overlap is always zero by construction. Keying drift solely on
+    scenario_id therefore meant it could never produce a number, no matter how
+    well embeddings worked. The centroid comparison is a distributional signal
+    (has the agent's overall behaviour moved?) rather than a per-scenario one, so
+    it is reported with its own method and confidence rather than being passed off
+    as an equivalent measurement.
     """
-    base_vec_map = {bv["scenario_id"]: bv["vector"] for bv in baseline_vectors}
-    overlapping = set(current_vectors.keys()).intersection(base_vec_map.keys())
+    base_vec_map = {
+        bv["scenario_id"]: bv["vector"]
+        for bv in baseline_vectors
+        if bv.get("scenario_id") and bv.get("vector")
+    }
+    baseline_all = [bv["vector"] for bv in baseline_vectors if bv.get("vector")]
+
+    if not current_vectors or not baseline_all:
+        return {
+            "status": "insufficient_data",
+            "score": None,
+            "method": None,
+            "overlap_count": 0,
+            "reason": "Either this run or the baseline has no usable embeddings.",
+        }
+
+    overlapping = set(current_vectors) & set(base_vec_map)
     overlap_count = len(overlapping)
 
-    if overlap_count == 0:
+    # ── Preferred: paired per-scenario comparison ─────────────────────────────
+    if overlap_count:
+        sims = [
+            s for sid in overlapping
+            if (s := _cosine(current_vectors[sid], base_vec_map[sid])) is not None
+        ]
+        if sims:
+            drift_score = 1.0 - (sum(sims) / len(sims))
+            result = {
+                "status": "success",
+                "method": "paired",
+                "score": round(drift_score, 4),
+                "band": _band(drift_score),
+                "overlap_count": overlap_count,
+                "baseline_sample_size": len(baseline_all),
+            }
+            if overlap_count < MIN_OVERLAP_FOR_DRIFT:
+                result["confidence"] = "low"
+                result["reason"] = (
+                    f"Only {overlap_count} overlapping scenarios "
+                    f"(recommended minimum {MIN_OVERLAP_FOR_DRIFT})."
+                )
+            else:
+                result["confidence"] = "normal"
+            return result
+
+    # ── Fallback: distributional centroid comparison ──────────────────────────
+    current_centroid = np.mean(
+        np.asarray(list(current_vectors.values()), dtype=float), axis=0
+    )
+    baseline_centroid = np.mean(np.asarray(baseline_all, dtype=float), axis=0)
+
+    if current_centroid.shape != baseline_centroid.shape:
         return {
-            "status": "insufficient_overlap",
+            "status": "dimension_mismatch",
             "score": None,
+            "method": None,
             "overlap_count": 0,
-            "reason": "No scenarios are shared with the baseline run.",
+            "reason": (
+                f"This run's embeddings are {current_centroid.shape[0]}-dimensional but the "
+                f"baseline's are {baseline_centroid.shape[0]}. The embedding model or "
+                f"EMBEDDING_DIMENSIONS changed since the baseline was recorded."
+            ),
         }
 
-    similarities = []
-    for sid in overlapping:
-        v1 = np.array(current_vectors[sid], dtype=float)
-        v2 = np.array(base_vec_map[sid], dtype=float)
-        denom = np.linalg.norm(v1) * np.linalg.norm(v2)
-        if denom == 0:
-            continue
-        similarities.append(float(np.dot(v1, v2) / denom))
-
-    if not similarities:
+    sim = _cosine(current_centroid, baseline_centroid)
+    if sim is None:
         return {
-            "status": "insufficient_overlap",
+            "status": "insufficient_data",
             "score": None,
-            "overlap_count": overlap_count,
-            "reason": "Shared scenarios had zero-magnitude embeddings.",
+            "method": None,
+            "overlap_count": 0,
+            "reason": "Embeddings had zero magnitude.",
         }
 
-    mean_sim = sum(similarities) / len(similarities)
-    drift_score = 1.0 - mean_sim
-
-    if drift_score < 0.1:
-        band = "Stable"
-    elif drift_score < 0.25:
-        band = "Minor Drift"
-    else:
-        band = "Significant Drift"
-
-    result = {
+    drift_score = 1.0 - sim
+    return {
         "status": "success",
+        "method": "centroid",
         "score": round(drift_score, 4),
-        "band": band,
-        "overlap_count": overlap_count,
+        "band": _band(drift_score),
+        "overlap_count": 0,
+        "current_sample_size": len(current_vectors),
+        "baseline_sample_size": len(baseline_all),
+        "confidence": "low",
+        "reason": (
+            "No scenarios are shared with the baseline (scenarios are regenerated "
+            "each run), so this compares the overall behavioural distribution "
+            "rather than matched scenarios."
+        ),
     }
-
-    # Report low confidence instead of silently presenting a thin comparison.
-    if overlap_count < MIN_OVERLAP_FOR_DRIFT:
-        result["confidence"] = "low"
-        result["reason"] = (
-            f"Only {overlap_count} overlapping scenarios "
-            f"(recommended minimum {MIN_OVERLAP_FOR_DRIFT})."
-        )
-    else:
-        result["confidence"] = "normal"
-
-    return result
 
 
 async def analyze_drift_node(state: EvaluationState) -> Dict[str, Any]:
@@ -207,6 +273,22 @@ async def analyze_drift_node(state: EvaluationState) -> Dict[str, Any]:
 
     if not traces_meta:
         return {"drift_profile": None, "errors": ["No traces available for analysis"]}
+
+    # Short-circuit before doing any work if embeddings are not usable — e.g. no
+    # embedding provider key is configured. Drift is the only feature that needs
+    # them, so the rest of the run must not be penalised. Previously this failed
+    # once per trace and buried the real reason in a list of per-trace errors.
+    if not settings.embeddings_enabled:
+        reason = settings.embeddings_disabled_reason or "Embeddings are not configured."
+        logger.info("Skipping drift analysis: %s", reason)
+        return {
+            "drift_profile": {
+                "status": "embeddings_disabled",
+                "score": None,
+                "reason": reason,
+            },
+            "total_cost_usd": 0.0,
+        }
 
     total_cost = 0.0
     errors = []

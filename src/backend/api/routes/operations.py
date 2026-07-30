@@ -55,6 +55,12 @@ async def get_drift_overview(
             "drift_score": score,
             "band": profile.get("band", "Unknown"),
             "overlap_count": profile.get("overlap_count", 0),
+            # "paired" compares matched scenarios; "centroid" compares the overall
+            # behavioural distribution because scenario ids are regenerated each
+            # run. Exposed so the dashboard can label the weaker measurement
+            # rather than presenting both as equivalent.
+            "method": profile.get("method"),
+            "confidence": profile.get("confidence"),
             "created_at": run.created_at.isoformat() if run.created_at else None,
             # Simple 2D layout using index + score for visualization
             # (real PCA would require the actual vectors)
