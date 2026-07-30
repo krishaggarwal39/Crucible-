@@ -70,8 +70,10 @@ def test_embeddings_disabled_with_placeholder_key():
 
 
 def test_embeddings_enabled_with_real_key():
+    # Deliberately not shaped like a real provider key, so secret scanners do not
+    # flag this fixture.
     s = make_settings(DEFAULT_EMBEDDING_MODEL="gemini/gemini-embedding-001",
-                      GEMINI_API_KEY="AIzaSy-something-that-looks-real")
+                      GEMINI_API_KEY="dummy-non-placeholder-credential")
     assert s.embeddings_enabled is True
     assert s.embeddings_disabled_reason is None
 
