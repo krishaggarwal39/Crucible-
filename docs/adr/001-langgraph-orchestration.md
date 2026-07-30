@@ -44,4 +44,17 @@ Use **LangGraph** (from LangChain ecosystem) as the orchestration layer.
 - **Positive**: Adding a new node (e.g., "remediation validator") is a 5-line change
 - **Negative**: LangGraph is a relatively young library — API may change
 - **Negative**: Debugging graph execution requires understanding LangGraph's internal dispatch
-- **Mitigation**: Pinned version in pyproject.toml, wrapper in `orchestrator.py` isolates the graph from business logic
+- **Negative**: A client consuming `stream_mode="updates"` receives *deltas* and must apply
+  the same reducers itself. Merging them with a plain `dict.update()` silently overwrites
+  the additive fields, which is how reported cost and turn counts once ended up equal to
+  the last node's delta rather than the run total.
+- **Mitigation**: `langgraph>=0.1.7` with a lower bound only (not a hard pin — see below);
+  the wrapper in `orchestrator.py` isolates the graph from business logic; and
+  `worker/tasks.py::_merge_state_update` applies the declared reducers explicitly, with a
+  test asserting its output equals `graph.ainvoke()`'s own accumulation.
+
+## Note on pinning
+An earlier revision of this ADR claimed the LangGraph version was pinned. It is not:
+`pyproject.toml` specifies `langgraph>=0.1.7`, which is a floor. Reproducible builds come
+from `uv.lock` instead. If a hard pin is wanted, change the specifier — do not rely on this
+document as evidence that one exists.
