@@ -60,7 +60,7 @@ async def test_create_agent_config_no_auth():
 
     config_in = AgentConfigCreate(
         name="No Auth Agent",
-        connector_type=ConnectorType.SDK,
+        connector_type=ConnectorType.REST_API,
     )
 
     await create_agent_config(

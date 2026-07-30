@@ -213,10 +213,6 @@ async def simulate_environment_node(state: EvaluationState) -> Dict[str, Any]:
                 target_url,
                 bearer_token=config.get("target_bearer_token"),
             )
-        elif connector_type == ConnectorType.SDK:
-            raise NotImplementedError("SDK connector not yet implemented")
-        elif connector_type == ConnectorType.MCP:
-            raise NotImplementedError("MCP connector not yet implemented")
         else:
             raise ValueError(f"Unsupported connector type: {connector_type}")
     except Exception as e:

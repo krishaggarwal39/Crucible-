@@ -4,9 +4,8 @@ Integration tests for Milestone 2 — Database Models & Alembic.
 Tests:
 1. Tables exist in Postgres with correct columns
 2. Tenant → cascade deletes propagate to all child tables
-3. GoldenBaseline unique constraint (one per tenant+agent) is enforced
-4. Enum values are correctly stored and retrieved
-5. Judgment.passed + score round-trip correctly
+3. Enum values are correctly stored and retrieved
+4. Judgment.passed + score round-trip correctly
 
 Run: pytest tests/test_db/test_models.py -v
 """
@@ -96,10 +95,10 @@ async def make_run(
 
 class TestTablesExist:
     async def test_all_tables_created(self, test_engine):
-        """All 8 expected tables must exist in the database."""
+        """All expected tables must exist in the database."""
         expected = {
             "tenants", "users", "agent_configs", "evaluation_runs",
-            "scenarios", "trace_metadata", "judgments", "golden_baselines",
+            "scenarios", "trace_metadata", "judgments",
         }
         async with test_engine.connect() as conn:
             tables = await conn.run_sync(
@@ -333,3 +332,43 @@ class TestJudgmentScores:
         
         with pytest.raises(IntegrityError):
             await session.commit()
+
+
+class TestRemovedSchema:
+    """
+    Guards the dead-schema removal in revision b3f81c6d90a4.
+
+    golden_baselines was an 8-column table with three indexes that was never
+    written to or read: the baseline feature is implemented with
+    EvaluationRun.is_baseline. ConnectorType.SDK / MCP were selectable in the UI
+    but the simulator raised NotImplementedError for both.
+    """
+
+    async def test_golden_baselines_table_is_gone(self, test_engine):
+        async with test_engine.connect() as conn:
+            tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
+            )
+        assert "golden_baselines" not in tables
+
+    async def test_golden_baseline_model_is_not_exported(self):
+        import backend.db.models as models
+
+        assert not hasattr(models, "GoldenBaseline")
+        assert "GoldenBaseline" not in models.__all__
+
+    async def test_connector_enum_only_offers_implemented_transports(self):
+        from backend.db.models.agent_config import ConnectorType
+
+        assert [c.value for c in ConnectorType] == ["rest_api"]
+
+    async def test_db_connector_enum_matches_the_python_enum(self, test_engine):
+        """The Postgres type must be narrowed too, not just the Python enum."""
+        async with test_engine.connect() as conn:
+            result = await conn.execute(text(
+                "SELECT e.enumlabel FROM pg_enum e "
+                "JOIN pg_type t ON t.oid = e.enumtypid "
+                "WHERE t.typname = 'connector_type_enum' ORDER BY e.enumsortorder"
+            ))
+            labels = [r[0] for r in result.fetchall()]
+        assert labels == ["REST_API"], f"unexpected enum labels: {labels}"

@@ -112,9 +112,10 @@ function NewAgentForm() {
               onChange={handleChange}
               style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
             >
+              {/* Only REST API is implemented. SDK and MCP were listed here but
+                  the simulator raised NotImplementedError for both, so choosing
+                  either produced a run that was guaranteed to fail. */}
               <option value="rest_api">REST API</option>
-              <option value="sdk">SDK</option>
-              <option value="mcp">MCP</option>
             </select>
           </div>
         </div>

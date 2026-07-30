@@ -6,15 +6,9 @@ Run: uvicorn scripts.mock_agent:app --port 8001
 """
 
 from fastapi import FastAPI
-from pydantic import BaseModel
 from typing import Any, Dict
 
 app = FastAPI(title="Mock Target Agent")
-
-
-class InteractionRequest(BaseModel):
-    message: str = ""
-    msg: str = ""  # alternate key from simulator
 
 
 SYSTEM_PROMPT = """You are a helpful customer support agent for TechCorp. 

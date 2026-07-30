@@ -2,7 +2,7 @@
 AgentConfig model — represents a registered AI agent under test.
 
 Design decisions:
-- connector_type determines HOW we talk to the agent (REST, SDK, MCP).
+- connector_type determines HOW we talk to the agent (currently REST only).
 - system_prompt is stored in plaintext here; at-rest encryption is a Milestone 8 concern.
 - tool_definitions is JSONB — flexible schema that mirrors OpenAI tool format.
 - auth_config is JSONB — stores tokens/API keys; will be encrypted in prod.
@@ -25,15 +25,21 @@ from backend.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from backend.db.models.evaluation_run import EvaluationRun
-    from backend.db.models.golden_baseline import GoldenBaseline
     from backend.db.models.tenant import Tenant
     from backend.db.models.user import User
 
 
 class ConnectorType(str, enum.Enum):
+    """
+    How Crucible talks to the agent under test.
+
+    Only REST_API is implemented. SDK and MCP previously existed here and were
+    offered in the UI, but the simulator raised NotImplementedError for both, so
+    selecting either produced a run that was guaranteed to fail. They will be
+    re-added when the connectors are actually built.
+    """
+
     REST_API = "rest_api"
-    SDK = "sdk"
-    MCP = "mcp"
 
 
 class AgentConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -77,9 +83,6 @@ class AgentConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     evaluation_runs: Mapped[list[EvaluationRun]] = relationship(
         "EvaluationRun", back_populates="agent_config"
-    )
-    golden_baselines: Mapped[list[GoldenBaseline]] = relationship(
-        "GoldenBaseline", back_populates="agent_config"
     )
 
     @property
