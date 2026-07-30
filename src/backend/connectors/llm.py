@@ -149,26 +149,54 @@ class LLMClient:
         stop=stop_after_attempt(3),
         reraise=True
     )
-    async def embed(self, model: str, input_text: str) -> Dict[str, Any]:
+    async def embed(
+        self, model: str, input_text: str, dimensions: int | None = None
+    ) -> Dict[str, Any]:
         """
-        Generates an embedding for the input text using litellm.aembedding.
+        Generate an embedding for `input_text`.
+
+        `dimensions` is requested explicitly so the vector width matches the
+        Qdrant collection. Models like gemini/gemini-embedding-001 return 3072
+        natively but support reduction, so without this the stored collection and
+        the produced vectors would disagree.
+
+        Providers that do not accept the argument fall back to their native size;
+        the caller (and VectorDB) validate the resulting width.
+
+        Note: embeddings are NOT available via OpenRouter, which is
+        chat-completions only. Settings.validate_embedding_model rejects that
+        configuration up front.
         """
+        target_dims = dimensions if dimensions is not None else settings.EMBEDDING_DIMENSIONS
+
+        async def _call(with_dims: bool):
+            kwargs: Dict[str, Any] = {"model": model, "input": input_text, "timeout": 60}
+            if with_dims and target_dims:
+                kwargs["dimensions"] = target_dims
+            return await litellm.aembedding(**kwargs)
+
         try:
-            response = await litellm.aembedding(
-                model=model,
-                input=input_text,
-                timeout=60
-            )
+            try:
+                response = await _call(with_dims=True)
+            except Exception as e:
+                if not target_dims:
+                    raise
+                logger.warning(
+                    "Embedding model %s rejected dimensions=%s (%s); retrying without it.",
+                    model, target_dims, type(e).__name__,
+                )
+                response = await _call(with_dims=False)
+
             # Track costs
             try:
                 # litellm can track embedding costs if price is known
                 cost = litellm.completion_cost(completion_response=response)
             except Exception:
                 cost = 0.0
-                
+
             return {
                 "vector": response.data[0]["embedding"],
-                "cost_usd": cost or 0.0
+                "cost_usd": cost or 0.0,
             }
         except Exception as e:
             logger.error(f"LLM Embedding failed: {e}")

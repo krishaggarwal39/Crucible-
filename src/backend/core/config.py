@@ -5,6 +5,31 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
+# Provider prefix -> the settings field holding its API key. Used to decide
+# whether drift analysis is actually usable before the pipeline tries it.
+_EMBEDDING_PROVIDER_KEYS = {
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "voyage": "VOYAGE_API_KEY",
+}
+
+# Substrings that indicate a placeholder rather than a real credential.
+_PLACEHOLDER_MARKERS = ("your_", "_here", "changeme", "xxxx", "replace_me")
+
+
+def _is_real_secret(value: object) -> bool:
+    """True only for a non-empty value that is not an obvious placeholder."""
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    lowered = v.lower()
+    return not any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+
+
 def _split_csv(value):
     """
     Allow list-typed settings to be supplied as a comma-separated string.
@@ -217,26 +242,102 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
 
     # ── AI Providers ─────────────────────────────────────────────────────────
+    # OPENROUTER_API_KEY is the only one the default configuration needs: it
+    # serves the judge, generator and evolution models.
+    OPENROUTER_API_KEY: str = ""
+    # GEMINI_API_KEY is needed only for drift analysis (embeddings). Without it
+    # the pipeline still runs; drift is reported as disabled.
+    GEMINI_API_KEY: str = ""
+    # Optional alternative providers. Nothing routes to these by default.
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
-    OPENROUTER_API_KEY: str = ""
+    MISTRAL_API_KEY: str = ""
+    COHERE_API_KEY: str = ""
+    VOYAGE_API_KEY: str = ""
 
     # ── LLM Defaults ─────────────────────────────────────────────────────────
+    # Chat/structured-output models. All of these are OpenRouter free tier and were
+    # verified to work with Instructor's default TOOLS mode, which is what the
+    # judge, generator and evolution nodes rely on.
     DEFAULT_JUDGE_MODEL: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
     DEFAULT_GENERATOR_MODEL: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
-    # Must be a real *embedding* model. A chat model here makes every drift
-    # analysis fail, because litellm.aembedding() cannot serve it.
-    # gemini/text-embedding-004 emits 768 dimensions, matching EMBEDDING_DIMENSIONS.
-    DEFAULT_EMBEDDING_MODEL: str = "gemini/text-embedding-004"
-    EMBEDDING_DIMENSIONS: int = 768
+
+    # Fallbacks are tried by litellm when the primary model fails.
+    #
+    # Deliberately excludes openrouter/openai/gpt-oss-20b:free — it returns a
+    # provider error under TOOLS mode, so having it here turned a transient
+    # primary failure into a hard failure. Both entries below were verified to
+    # produce valid structured output in TOOLS mode.
     FALLBACK_MODELS: Annotated[list[str], NoDecode] = [
         "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
-        "openrouter/openai/gpt-oss-20b:free",
+        "openrouter/nvidia/nemotron-nano-9b-v2:free",
     ]
+
     MAX_TOKENS_JUDGE: int = 4096
     MAX_TOKENS_GENERATOR: int = 8192
+
+    # ── Embeddings (drift analysis only) ─────────────────────────────────────
+    # Must be a real *embedding* model. A chat model here breaks every drift
+    # analysis, because litellm.aembedding() cannot serve one.
+    #
+    # OpenRouter has NO embeddings endpoint — it is chat-completions only — so an
+    # `openrouter/...` value can never work here. validate_embedding_model below
+    # rejects that outright rather than letting it fail per-trace at runtime.
+    #
+    # gemini/gemini-embedding-001 natively returns 3072 dimensions but accepts a
+    # `dimensions` argument, so EMBEDDING_DIMENSIONS controls the real output
+    # size and the Qdrant collection stays consistent.
+    #
+    # Leave DEFAULT_EMBEDDING_MODEL empty to disable drift analysis entirely; the
+    # rest of the pipeline (generate, simulate, judge, evolve) is unaffected.
+    DEFAULT_EMBEDDING_MODEL: str = "gemini/gemini-embedding-001"
+    EMBEDDING_DIMENSIONS: int = 768
+
+    @property
+    def embedding_provider(self) -> str:
+        """Provider prefix of the configured embedding model (e.g. 'gemini')."""
+        model = (self.DEFAULT_EMBEDDING_MODEL or "").strip()
+        return model.split("/", 1)[0] if "/" in model else ""
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        """
+        Whether drift analysis can actually run.
+
+        False when no embedding model is configured, or when the API key its
+        provider needs is missing or still a placeholder. The analyzer checks this
+        and reports a clear reason instead of failing once per trace.
+        """
+        if not (self.DEFAULT_EMBEDDING_MODEL or "").strip():
+            return False
+        key_field = _EMBEDDING_PROVIDER_KEYS.get(self.embedding_provider)
+        if key_field is None:
+            # Unknown provider: assume the operator configured it deliberately.
+            return True
+        return _is_real_secret(getattr(self, key_field, ""))
+
+    @property
+    def embeddings_disabled_reason(self) -> str | None:
+        if self.embeddings_enabled:
+            return None
+        if not (self.DEFAULT_EMBEDDING_MODEL or "").strip():
+            return "No embedding model is configured (DEFAULT_EMBEDDING_MODEL is empty)."
+        key_field = _EMBEDDING_PROVIDER_KEYS.get(self.embedding_provider, "the provider API key")
+        return (
+            f"{key_field} is not set, so {self.DEFAULT_EMBEDDING_MODEL!r} cannot be used."
+        )
+
+    @model_validator(mode="after")
+    def validate_embedding_model(self) -> "Settings":
+        if self.embedding_provider == "openrouter":
+            raise ValueError(
+                "DEFAULT_EMBEDDING_MODEL cannot be an OpenRouter model: OpenRouter "
+                "serves chat completions only and has no embeddings endpoint. Use an "
+                "embedding provider (e.g. gemini/gemini-embedding-001), or leave it "
+                "empty to disable drift analysis."
+            )
+        return self
 
 
 @lru_cache

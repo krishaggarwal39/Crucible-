@@ -96,6 +96,33 @@ fan-out nodes, so a single node cannot blow past the limit before the next edge 
 | Auth | JWT (access) + HttpOnly cookie (refresh) + bcrypt |
 | Observability | OpenTelemetry (metrics + tracing), off by default — set `OTEL_ENABLED=true` |
 
+## Models
+
+Everything the pipeline needs for chat runs on **OpenRouter free-tier NVIDIA
+Nemotron** models, so a single `OPENROUTER_API_KEY` is enough to run Crucible
+end to end.
+
+| Role | Default | Notes |
+|------|---------|-------|
+| Judge / Generator / Evolution | `openrouter/nvidia/nemotron-3-super-120b-a12b:free` | Verified to return valid structured output under Instructor's TOOLS mode |
+| Fallbacks | `nemotron-3-nano-30b-a3b:free`, `nemotron-nano-9b-v2:free` | Both verified in TOOLS mode |
+| Embeddings (drift only) | `gemini/gemini-embedding-001` | Reduced to `EMBEDDING_DIMENSIONS` (768) |
+
+Two things worth knowing before changing these:
+
+- **OpenRouter cannot do embeddings.** It is a chat-completions API with no
+  embeddings endpoint, so `DEFAULT_EMBEDDING_MODEL` can never be an
+  `openrouter/...` value. Startup rejects that outright with an explanation
+  rather than failing once per trace at runtime.
+- **`openrouter/openai/gpt-oss-20b:free` is not a usable fallback.** It returns a
+  provider error under TOOLS mode, which would turn a transient primary failure
+  into a hard one. It is deliberately excluded from `FALLBACK_MODELS`.
+
+Drift analysis is the only feature that needs a second provider. Leave
+`DEFAULT_EMBEDDING_MODEL` empty (or omit `GEMINI_API_KEY`) and the pipeline still
+generates, simulates, judges and evolves — the drift profile simply reports
+`embeddings_disabled` with the reason.
+
 ## Prerequisites
 
 - Python 3.12+
@@ -110,8 +137,8 @@ fan-out nodes, so a single node cannot blow past the limit before the next edge 
 ```bash
 cp .env.example .env
 # Edit .env — at minimum set:
-#   OPENROUTER_API_KEY (required for LLM operations)
-#   GEMINI_API_KEY (required for drift/embeddings)
+#   OPENROUTER_API_KEY (required — the only provider key needed to run)
+#   GEMINI_API_KEY (optional — enables drift analysis; see Models below)
 #   JWT_SECRET_KEY (change from default for any non-local use)
 #   CREDENTIAL_ENCRYPTION_KEY (generate via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 ```
@@ -317,10 +344,9 @@ See `.env.example` for the full list. Key variables:
 |----------|----------|-------------|
 | `JWT_SECRET_KEY` | Yes | Secret for signing JWTs |
 | `CREDENTIAL_ENCRYPTION_KEY` | Yes | Fernet key for encrypting agent auth configs |
-| `OPENROUTER_API_KEY` | Yes (for LLM) | Default judge/generator provider |
-| `GEMINI_API_KEY` | Yes (for drift) | Used by the default embedding model |
-| `OPENAI_API_KEY` | No | Alternative provider |
-| `ANTHROPIC_API_KEY` | No | Alternative provider |
+| `OPENROUTER_API_KEY` | **Yes** | The only provider key the pipeline needs — serves the judge, generator and evolution models |
+| `GEMINI_API_KEY` | Optional | Embeddings for drift analysis only. OpenRouter has no embeddings endpoint, so drift needs a separate provider. Without it drift reports `embeddings_disabled` and everything else still runs |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | No | Unused by the default configuration |
 | `POSTGRES_*` | Yes | Database connection |
 | `REDIS_HOST/PORT` | Yes | Redis for broker + pubsub |
 | `QDRANT_URL` | Yes | Vector database for drift analysis |
