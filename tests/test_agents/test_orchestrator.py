@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, AsyncMock
 from backend.agents.orchestrator import build_evaluation_graph
 from backend.schemas.evaluation import ScenarioGenerationResponse, ScenarioGenerationItem, JudgmentResponse
 
@@ -10,12 +10,13 @@ def mock_llm():
          patch("backend.agents.simulator.upload_trace_with_retry", return_value="dummy/s3/path"), \
          patch("backend.agents.judge.s3_client.download_trace", return_value=b'{"interactions": []}'), \
          patch("backend.agents.analyzer.vector_db.init_collection", new_callable=AsyncMock), \
+         patch("backend.agents.analyzer.vector_db.verify_dimensions", new_callable=AsyncMock), \
          patch("backend.agents.analyzer.s3_client.download_trace", new_callable=AsyncMock, return_value=b'{"interactions": []}'), \
          patch("backend.agents.analyzer.llm_client.generate", new_callable=AsyncMock, return_value={"content": "summary", "cost_usd": 0.001}), \
          patch("backend.agents.analyzer.llm_client.embed", new_callable=AsyncMock, return_value={"vector": [0.1] * 1536, "cost_usd": 0.0001}), \
          patch("backend.agents.analyzer.vector_db.upsert_trace_embedding", new_callable=AsyncMock), \
          patch("backend.agents.analyzer._resolve_baseline", new_callable=AsyncMock, return_value=None), \
-         patch("backend.agents.evolution.llm_client.generate", new_callable=AsyncMock) as mock_evo:
+         patch("backend.agents.evolution.llm_client.generate", new_callable=AsyncMock):
         
         mock_gen.return_value = {
             "parsed": ScenarioGenerationResponse(

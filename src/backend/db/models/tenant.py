@@ -18,7 +18,6 @@ from backend.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from backend.db.models.agent_config import AgentConfig
     from backend.db.models.evaluation_run import EvaluationRun
-    from backend.db.models.golden_baseline import GoldenBaseline
     from backend.db.models.user import User
 
 
@@ -48,9 +47,6 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     evaluation_runs: Mapped[list[EvaluationRun]] = relationship(
         "EvaluationRun", back_populates="tenant", passive_deletes=True
-    )
-    golden_baselines: Mapped[list[GoldenBaseline]] = relationship(
-        "GoldenBaseline", back_populates="tenant", passive_deletes=True
     )
 
     def __repr__(self) -> str:

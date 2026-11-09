@@ -33,7 +33,6 @@ from backend.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from backend.db.models.agent_config import AgentConfig
-    from backend.db.models.golden_baseline import GoldenBaseline
     from backend.db.models.scenario import Scenario
     from backend.db.models.tenant import Tenant
     from backend.db.models.user import User
@@ -110,9 +109,6 @@ class EvaluationRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     scenarios: Mapped[list[Scenario]] = relationship(
         "Scenario", back_populates="evaluation_run", cascade="all, delete-orphan"
-    )
-    golden_baselines: Mapped[list[GoldenBaseline]] = relationship(
-        "GoldenBaseline", back_populates="evaluation_run"
     )
 
     @property

@@ -5,24 +5,32 @@ import { api } from '@/lib/api';
 import { useParams } from 'next/navigation';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import BaselineToggle from '@/components/dashboard/BaselineToggle';
-import { Loader2, ArrowLeft, ShieldAlert, Sparkles, BrainCircuit } from 'lucide-react';
+import ScenarioResults from '@/components/dashboard/ScenarioResults';
+import { Loader2, ArrowLeft, Sparkles, BrainCircuit } from 'lucide-react';
 import Link from 'next/link';
 import LogViewer from '@/components/LogViewer';
+import { isActiveStatus, queryKeys } from '@/lib/queryKeys';
+
+type EvolutionSuggestion = {
+  failure_pattern?: string;
+  suggested_prompt?: string;
+  suggested_tools?: string | null;
+};
 
 export default function EvaluationDetail() {
   const params = useParams();
   const runId = params?.id as string;
 
   const { data: run, isLoading, isError } = useQuery({
-    queryKey: ['evaluation', runId],
+    queryKey: queryKeys.evaluations.detail(runId),
     queryFn: async () => {
       const res = await api.get(`/api/v1/evaluations/${runId}`);
       return res.data;
     },
     enabled: !!runId,
     refetchInterval: (query) => {
-      const data = query.state?.data as any;
-      return data?.status === 'running' || data?.status === 'pending' ? 3000 : false;
+      const data = query.state?.data as { status?: string } | undefined;
+      return isActiveStatus(data?.status) ? 3000 : false;
     },
   });
 
@@ -104,7 +112,7 @@ export default function EvaluationDetail() {
               <Sparkles size={20} color="var(--warning-color)" /> Evolution Suggestions
             </h2>
             
-            {run.evolution_suggestions.map((suggestion: any, idx: number) => (
+            {run.evolution_suggestions.map((suggestion: EvolutionSuggestion, idx: number) => (
               <div key={idx} style={{ marginBottom: idx < run.evolution_suggestions.length - 1 ? '24px' : '0' }}>
                 <div style={{ marginBottom: '16px' }}>
                   <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Failure Synthesis</div>
@@ -122,6 +130,13 @@ export default function EvaluationDetail() {
             ))}
           </div>
         )}
+
+        {/* Per-scenario results: scores, judge reasoning and raw trace downloads.
+            These were persisted to Postgres but no endpoint exposed them, so the
+            product's actual output was unreachable from the UI. */}
+        <div style={{ marginTop: '32px' }}>
+          <ScenarioResults runId={run.id} runStatus={run.status} />
+        </div>
 
         {/* Log Viewer for SSE Streaming if running, or just to show it exists */}
         <div style={{ marginTop: '32px' }}>

@@ -6,9 +6,13 @@ from typing import Protocol
 import redis.asyncio as aioredis
 from pydantic import ValidationError
 
-from backend.schemas.events import BaseEvent, EvaluationEventV1
+from backend.schemas.events import EvaluationEventV1
 from backend.core.config import get_settings
-from backend.core.telemetry import events_published_total, events_dropped_total, events_publish_duration
+from backend.core.telemetry import (
+    get_events_dropped_total,
+    get_events_publish_duration,
+    get_events_published_total,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -17,6 +21,23 @@ settings = get_settings()
 MAX_REPLAY_BUFFER_SIZE = 200
 # TTL for the replay buffer (auto-expire after run is likely done)
 REPLAY_BUFFER_TTL_SECONDS = 3600  # 1 hour
+
+
+def stream_channel(tenant_id: str, run_id: str) -> str:
+    """
+    Pub/sub channel for a run's progress events, namespaced by tenant.
+
+    Defense-in-depth: ticket issuance is already tenant-checked, but keying the
+    channel by tenant too means a run's events can never be addressed by run_id
+    alone across tenants. Publisher and subscriber must build the key the same
+    way for events to flow.
+    """
+    return f"eval_stream:{tenant_id}:{run_id}"
+
+
+def replay_key(tenant_id: str, run_id: str) -> str:
+    """Replay-buffer key for a run, namespaced by tenant (see stream_channel)."""
+    return f"eval_replay:{tenant_id}:{run_id}"
 
 
 class EventPublisher(Protocol):
@@ -36,9 +57,9 @@ class RedisEventPublisher:
             logger.error(f"Failed to publish to redis channel {channel}: {e}")
             raise
 
-    async def store_for_replay(self, run_id: str, message: str) -> None:
+    async def store_for_replay(self, tenant_id: str, run_id: str, message: str) -> None:
         """Store event in a Redis list for replay on reconnection."""
-        key = f"eval_replay:{run_id}"
+        key = replay_key(tenant_id, run_id)
         try:
             pipe = self.redis.pipeline()
             pipe.rpush(key, message)
@@ -49,12 +70,14 @@ class RedisEventPublisher:
             # Non-critical — replay is best-effort
             logger.warning(f"Failed to store replay event for {run_id}: {e}")
 
-    async def get_replay_events(self, run_id: str, after_seq: int) -> list[str]:
+    async def get_replay_events(
+        self, tenant_id: str, run_id: str, after_seq: int
+    ) -> list[str]:
         """
         Retrieve stored events for a run that have seq_num > after_seq.
         Returns raw JSON strings ready to send to the client.
         """
-        key = f"eval_replay:{run_id}"
+        key = replay_key(tenant_id, run_id)
         try:
             all_events = await self.redis.lrange(key, 0, -1)
             replay = []
@@ -73,7 +96,8 @@ class RedisEventPublisher:
             return []
 
     async def close(self):
-        await self.redis.close()
+        # .close() is deprecated in redis-py 5.x in favour of .aclose().
+        await self.redis.aclose()
 
 
 class EventBus:
@@ -87,7 +111,7 @@ class EventBus:
     async def publish_evaluation_event(self, event: EvaluationEventV1) -> None:
         """Publishes an EvaluationEventV1 safely with full observability."""
         start_time = time.perf_counter()
-        channel = f"eval_stream:{event.run_id}"
+        channel = stream_channel(event.tenant_id, event.run_id)
         
         try:
             # Pydantic validation is already enforced by the type hint/instantiation,
@@ -98,19 +122,24 @@ class EventBus:
             
             # Also store for replay on reconnection
             if hasattr(self.publisher, "store_for_replay"):
-                await self.publisher.store_for_replay(event.run_id, payload)
+                await self.publisher.store_for_replay(
+                    event.tenant_id, event.run_id, payload
+                )
             
-            # Metrics: Success
-            events_published_total.add(1, {"event_type": "EvaluationEventV1", "status": event.status})
+            # Metrics: Success. Resolved on use so they bind to the real
+            # MeterProvider rather than the no-op default present at import time.
+            get_events_published_total().add(
+                1, {"event_type": "EvaluationEventV1", "status": event.status}
+            )
             duration = time.perf_counter() - start_time
-            events_publish_duration.record(duration)
-            
+            get_events_publish_duration().record(duration)
+
         except ValidationError as ve:
             logger.error(f"Schema validation failed before publish: {ve}")
-            events_dropped_total.add(1, {"reason": "validation_error"})
+            get_events_dropped_total().add(1, {"reason": "validation_error"})
         except Exception as e:
             logger.error(f"EventBus publish failed: {e}")
-            events_dropped_total.add(1, {"reason": "transport_error"})
+            get_events_dropped_total().add(1, {"reason": "transport_error"})
             
     async def close(self):
         if hasattr(self.publisher, "close"):

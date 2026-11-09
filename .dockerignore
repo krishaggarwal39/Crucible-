@@ -1,0 +1,38 @@
+# Keep the build context small and free of secrets.
+.git
+.gitignore
+.github
+
+# Secrets — must never enter an image layer or the build context
+.env
+.env.*
+!.env.example
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+
+# Frontend — the backend image has no use for these (node_modules is huge)
+src/frontend/node_modules
+src/frontend/.next
+src/frontend/out
+src/frontend/coverage
+
+# Local artefacts
+*.log
+scratch
+docs
+*.md
+!README.md
+docker-compose*.yml
+Makefile
+nginx.conf
+.DS_Store

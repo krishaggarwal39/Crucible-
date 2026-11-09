@@ -3,7 +3,7 @@ Tests for the S3BlobStore connector.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from backend.connectors.s3 import S3BlobStore
 

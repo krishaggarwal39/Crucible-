@@ -1,11 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import Link from 'next/link';
-import { ChevronRight, Loader2, Play, AlertTriangle, ShieldCheck } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Play,
+  ShieldCheck,
+} from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+
+import { isActiveStatus, queryKeys } from '@/lib/queryKeys';
 
 type DriftProfile = {
   status: string;
@@ -26,17 +35,24 @@ type EvaluationRun = {
   is_baseline: boolean;
 };
 
+const LIMIT = 10;
+
 export default function EvaluationTable() {
   const [page, setPage] = useState(0);
-  const limit = 10;
 
-  const { data: runs, isLoading, isError } = useQuery<EvaluationRun[]>({
-    queryKey: ['evaluations', page],
+  const { data: runs, isLoading, isError, isFetching } = useQuery<EvaluationRun[]>({
+    queryKey: queryKeys.evaluations.list(page, LIMIT),
     queryFn: async () => {
-      const res = await api.get(`/api/v1/evaluations/?skip=${page * limit}&limit=${limit}`);
+      const res = await api.get(`/api/v1/evaluations/?skip=${page * LIMIT}&limit=${LIMIT}`);
       return res.data;
     },
-    refetchInterval: 5000, // Poll every 5s for running tasks
+    // Poll only while something is actually in flight. Polling unconditionally
+    // every 5s burned 12 req/min against a 60 req/min tier even when idle.
+    refetchInterval: (query) => {
+      const rows = query.state.data as EvaluationRun[] | undefined;
+      return rows?.some((r) => isActiveStatus(r.status)) ? 5000 : false;
+    },
+    placeholderData: keepPreviousData,
   });
 
   if (isLoading) {
@@ -60,7 +76,8 @@ export default function EvaluationTable() {
       case 'completed': return <span style={{ color: 'var(--success-color)', backgroundColor: 'rgba(16, 185, 129, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>Completed</span>;
       case 'running': return <span style={{ color: 'var(--primary-color)', backgroundColor: 'var(--primary-light)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}><Loader2 size={12} className="animate-spin"/> Running</span>;
       case 'failed': return <span style={{ color: 'var(--danger-color)', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>Failed</span>;
-      default: return <span style={{ color: 'var(--text-tertiary)', backgroundColor: 'rgba(156, 163, 175, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>{status}</span>;
+      case 'cancelled': return <span style={{ color: 'var(--warning-color)', backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>Cancelled</span>;
+      default: return <span style={{ color: 'var(--text-tertiary)', backgroundColor: 'rgba(156, 163, 175, 0.1)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, textTransform: 'capitalize' }}>{status}</span>;
     }
   };
 
@@ -132,7 +149,12 @@ export default function EvaluationTable() {
                   {formatDistanceToNow(new Date(run.created_at), { addSuffix: true })}
                 </td>
                 <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                  <Link href={`/evaluations/${run.id}`} style={{ color: 'var(--text-secondary)', display: 'inline-flex', padding: '6px', borderRadius: '6px' }} className="hover-btn">
+                  <Link
+                    href={`/evaluations/${run.id}`}
+                    aria-label={`View evaluation ${run.name}`}
+                    style={{ color: 'var(--text-secondary)', display: 'inline-flex', padding: '6px', borderRadius: '6px' }}
+                    className="hover-btn"
+                  >
                     <ChevronRight size={18} />
                   </Link>
                 </td>
@@ -141,7 +163,69 @@ export default function EvaluationTable() {
           </tbody>
         </table>
       </div>
-      
+
+      {/* Pagination controls. `page` state existed but nothing ever rendered a
+          way to change it, so the table was permanently pinned to page 0. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          padding: '12px 24px',
+          borderTop: '1px solid var(--border-color)',
+          fontSize: '0.875rem',
+          color: 'var(--text-secondary)',
+        }}
+      >
+        <span>
+          Page {page + 1}
+          {isFetching ? ' · updating…' : ''}
+        </span>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+            aria-label="Previous page"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              cursor: page === 0 ? 'not-allowed' : 'pointer',
+              opacity: page === 0 ? 0.5 : 1,
+            }}
+          >
+            <ChevronLeft size={14} /> Previous
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={runs.length < LIMIT}
+            aria-label="Next page"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              cursor: runs.length < LIMIT ? 'not-allowed' : 'pointer',
+              opacity: runs.length < LIMIT ? 0.5 : 1,
+            }}
+          >
+            Next <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+
       <style jsx>{`
         .hover-row:hover {
           background-color: rgba(255, 255, 255, 0.02);

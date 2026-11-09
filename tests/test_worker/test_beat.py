@@ -4,7 +4,6 @@ Tests for the Celery Beat zombie sweeper task.
 
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from datetime import datetime, timezone, timedelta
 
 from backend.worker.beat import _sweep_zombie_runs_async
 

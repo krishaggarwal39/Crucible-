@@ -1,4 +1,5 @@
 from celery import Celery
+
 from backend.core.config import get_settings
 
 settings = get_settings()
@@ -7,7 +8,7 @@ celery_app = Celery(
     "crucible_worker",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["backend.worker.tasks", "backend.worker.beat"]
+    include=["backend.worker.tasks", "backend.worker.beat"],
 )
 
 celery_app.conf.update(
@@ -20,6 +21,9 @@ celery_app.conf.update(
     task_ignore_result=True,
     worker_prefetch_multiplier=1,
     task_reject_on_worker_lost=True,
+    # Global ceiling so no task can run forever. Individual tasks may override.
+    task_soft_time_limit=settings.TASK_SOFT_TIME_LIMIT_SECONDS,
+    task_time_limit=settings.TASK_TIME_LIMIT_SECONDS,
     beat_schedule={
         "sweep-zombie-runs-every-minute": {
             "task": "backend.worker.beat.sweep_zombie_runs",
@@ -29,5 +33,5 @@ celery_app.conf.update(
             "task": "backend.worker.beat.cleanup_orphaned_traces",
             "schedule": 600.0,
         },
-    }
+    },
 )

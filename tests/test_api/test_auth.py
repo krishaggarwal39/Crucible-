@@ -5,16 +5,12 @@ Integration tests for Authentication API endpoints.
 import pytest
 import pytest_asyncio
 import httpx
-from httpx import ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
 from backend.core.security import get_password_hash
 from backend.db.models.tenant import Tenant
 from backend.db.models.user import User, UserRole
-from backend.main import app
-from backend.db.session import get_db
 
 settings = get_settings()
 

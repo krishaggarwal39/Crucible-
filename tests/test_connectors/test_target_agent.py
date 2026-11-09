@@ -1,6 +1,6 @@
 import pytest
 from httpx import Response
-from backend.connectors.target_agent import TargetAgentConnector, TargetAgentCircuitBreakerOpen
+from backend.connectors.target_agent import TargetAgentConnector
 
 @pytest.mark.asyncio
 async def test_target_agent_circuit_breaker_5xx(mocker):

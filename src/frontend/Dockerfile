@@ -15,7 +15,16 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Environment variables needed during build
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# NEXT_PUBLIC_* values are inlined at build time, so this must arrive as a build
+# arg. Passing it only as a runtime env var (as docker-compose.prod.yml used to)
+# has no effect on the compiled bundle.
+# Leave empty when serving the frontend and API through the same nginx origin so
+# the browser uses relative, same-origin URLs — which is also what the SSE
+# EventSource connection needs.
+ARG NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 RUN npm run build
 

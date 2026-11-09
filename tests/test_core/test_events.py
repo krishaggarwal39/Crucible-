@@ -3,8 +3,7 @@ Tests for the EventBus and Redis publisher.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-from datetime import datetime, timezone
+from unittest.mock import patch, AsyncMock
 
 from backend.core.events import EventBus, RedisEventPublisher
 from backend.schemas.events import EvaluationEventV1
@@ -19,6 +18,7 @@ async def test_event_bus_publish_success():
     event = EvaluationEventV1(
         seq_num=1,
         run_id="run-123",
+        tenant_id="tenant-abc",
         status="running",
         current_node="generate",
         turn_count=1,
@@ -29,7 +29,8 @@ async def test_event_bus_publish_success():
 
     mock_publisher.publish.assert_called_once()
     call_args = mock_publisher.publish.call_args
-    assert call_args[0][0] == "eval_stream:run-123"
+    # Channel is namespaced by tenant_id as defense-in-depth.
+    assert call_args[0][0] == "eval_stream:tenant-abc:run-123"
     # Verify it's valid JSON
     import json
     payload = json.loads(call_args[0][1])
@@ -48,6 +49,7 @@ async def test_event_bus_publish_transport_error():
     event = EvaluationEventV1(
         seq_num=1,
         run_id="run-123",
+        tenant_id="tenant-abc",
         status="running",
         current_node="generate",
     )
@@ -96,6 +98,7 @@ class TestEvaluationEventV1Schema:
         event = EvaluationEventV1(
             seq_num=1,
             run_id="abc",
+            tenant_id="tenant-abc",
             status="running",
             current_node="judge",
         )
@@ -107,6 +110,7 @@ class TestEvaluationEventV1Schema:
         event = EvaluationEventV1(
             seq_num=5,
             run_id="run-1",
+            tenant_id="tenant-abc",
             status="completed",
             current_node="end",
             passed_scenarios=8,

@@ -1,3 +1,38 @@
+# Local development stack.
+#
+# The API itself is NOT run here on purpose — run it on the host with
+# `make dev-backend` so you get hot reload. This file provides the backing
+# services plus the Celery worker/beat.
+#
+# JWT_SECRET_KEY and CREDENTIAL_ENCRYPTION_KEY have no safe defaults, so they are
+# declared with `:?` and compose fails fast with a readable message if unset,
+# rather than letting the containers crash-loop on a Pydantic validation error.
+
+x-backend-env: &backend-env
+  POSTGRES_USER: ${POSTGRES_USER:-crucible}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crucible_secret}
+  POSTGRES_DB: ${POSTGRES_DB:-crucible}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  QDRANT_URL: http://qdrant:6333
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  S3_ENDPOINT_URL: http://minio:9000
+  # Derived from the MinIO root credentials so the server and the client can
+  # never drift apart (they previously defaulted to different passwords).
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-admin_secret}
+  S3_BUCKET_TRACES: ${S3_BUCKET_TRACES:-crucible-traces}
+  JWT_SECRET_KEY: "${JWT_SECRET_KEY:?JWT_SECRET_KEY is required - copy .env.example to .env and fill it in}"
+  CREDENTIAL_ENCRYPTION_KEY: "${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required - generate one with Fernet.generate_key(), see .env.example}"
+  APP_ENV: ${APP_ENV:-development}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -43,7 +78,7 @@ services:
     container_name: crucible-minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-admin123}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-admin_secret}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -56,33 +91,37 @@ services:
       timeout: 5s
       retries: 5
 
+  # Creates the traces bucket so the very first trace upload cannot fail.
+  minio-init:
+    image: minio/mc:latest
+    container_name: crucible-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 '${MINIO_ROOT_USER:-admin}' '${MINIO_ROOT_PASSWORD:-admin_secret}' &&
+      mc mb --ignore-existing local/${S3_BUCKET_TRACES:-crucible-traces} &&
+      echo 'bucket ready'
+      "
+
   celery-worker:
     build: .
     container_name: crucible-celery-worker
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-crucible}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crucible_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-crucible}
-      POSTGRES_HOST: postgres
-      REDIS_HOST: redis
-      S3_ENDPOINT_URL: http://minio:9000
+    environment: *backend-env
     command: celery -A backend.worker.celery_app worker --loglevel=info
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
 
   celery-beat:
     build: .
     container_name: crucible-celery-beat
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-crucible}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crucible_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-crucible}
-      POSTGRES_HOST: postgres
-      REDIS_HOST: redis
-      S3_ENDPOINT_URL: http://minio:9000
+    environment: *backend-env
     command: celery -A backend.worker.celery_app beat --loglevel=info
     depends_on:
       postgres:

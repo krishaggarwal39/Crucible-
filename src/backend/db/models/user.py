@@ -6,7 +6,9 @@ Roles:
   - member: can trigger runs and view results, cannot delete agents/baselines
 
 hashed_password is stored as a bcrypt hash — never the plaintext.
-email is unique globally (not per-tenant) to simplify login flows.
+email is unique per-tenant at the DB level (uq_users_tenant_email), but the
+application additionally rejects an address that exists in ANY tenant, because
+login resolves an account by email alone.
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from backend.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from backend.db.models.agent_config import AgentConfig
     from backend.db.models.evaluation_run import EvaluationRun
-    from backend.db.models.golden_baseline import GoldenBaseline
     from backend.db.models.tenant import Tenant
 
 
@@ -65,9 +66,6 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     evaluation_runs: Mapped[list[EvaluationRun]] = relationship(
         "EvaluationRun", back_populates="created_by_user", foreign_keys="[EvaluationRun.created_by]"
-    )
-    approved_baselines: Mapped[list[GoldenBaseline]] = relationship(
-        "GoldenBaseline", back_populates="approved_by_user", foreign_keys="[GoldenBaseline.approved_by]"
     )
 
     def __repr__(self) -> str:
