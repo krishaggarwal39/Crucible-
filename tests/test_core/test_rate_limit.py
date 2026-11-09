@@ -2,9 +2,9 @@
 Tests for the rate limiting middleware.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from backend.core.rate_limit import _get_client_ip, _get_tier
+from backend.core.rate_limit import RateLimitMiddleware, _get_client_ip, _get_tier
 
 
 def _request(headers: dict | None = None, peer: str = "192.168.1.100"):
@@ -93,3 +93,48 @@ class TestGetClientIp:
         mocker.patch("backend.core.rate_limit.settings.TRUSTED_PROXY_COUNT", 1)
         request = _request({"X-Forwarded-For": ""}, peer="10.0.0.1")
         assert _get_client_ip(request) == "10.0.0.1"
+
+
+def _dispatch_request(path: str, peer: str = "192.168.1.100"):
+    request = MagicMock()
+    request.url.path = path
+    request.headers = {}
+    request.client.host = peer
+    return request
+
+
+class TestFailClosedOnRedisOutage:
+    """
+    Redis is the only brute-force control on the auth endpoints, so a Redis
+    outage must deny auth requests (fail closed) while letting the default tier
+    through (fail open).
+    """
+
+    async def test_auth_tier_fails_closed_when_redis_down(self, mocker):
+        middleware = RateLimitMiddleware(app=MagicMock())
+        mocker.patch.object(
+            middleware, "_get_redis", side_effect=ConnectionError("redis down")
+        )
+        call_next = AsyncMock()
+
+        response = await middleware.dispatch(
+            _dispatch_request("/api/v1/auth/login"), call_next
+        )
+
+        assert response.status_code == 503
+        call_next.assert_not_called()
+
+    async def test_default_tier_fails_open_when_redis_down(self, mocker):
+        middleware = RateLimitMiddleware(app=MagicMock())
+        mocker.patch.object(
+            middleware, "_get_redis", side_effect=ConnectionError("redis down")
+        )
+        sentinel = MagicMock()
+        call_next = AsyncMock(return_value=sentinel)
+
+        response = await middleware.dispatch(
+            _dispatch_request("/api/v1/evaluations/"), call_next
+        )
+
+        assert response is sentinel
+        call_next.assert_awaited_once()

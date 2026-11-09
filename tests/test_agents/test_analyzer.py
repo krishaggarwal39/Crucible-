@@ -184,6 +184,7 @@ class TestAnalyzeDriftNode:
     @pytest.mark.asyncio
     async def test_no_baseline_found(self):
         with patch("backend.agents.analyzer.vector_db.init_collection", new_callable=AsyncMock), \
+             patch("backend.agents.analyzer.vector_db.verify_dimensions", new_callable=AsyncMock), \
              patch("backend.agents.analyzer._process_single_trace", new_callable=AsyncMock) as mock_proc, \
              patch("backend.agents.analyzer._resolve_baseline", new_callable=AsyncMock) as mock_base:
 

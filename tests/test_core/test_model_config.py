@@ -35,6 +35,15 @@ def make_settings(**overrides):
     return Settings(**kwargs)
 
 
+# Strong non-default infra credentials, shaped so secret scanners do not flag
+# them. Needed whenever a test builds a *production* Settings().
+_STRONG_INFRA = {
+    "POSTGRES_PASSWORD": "strong-non-default-db-password",
+    "S3_ACCESS_KEY": "strong-non-default-access",
+    "S3_SECRET_KEY": "strong-non-default-secret",
+}
+
+
 # ── OpenRouter cannot serve embeddings ────────────────────────────────────────
 
 def test_openrouter_embedding_model_is_rejected():
@@ -82,6 +91,55 @@ def test_embeddings_can_be_switched_off_entirely():
     s = make_settings(DEFAULT_EMBEDDING_MODEL="")
     assert s.embeddings_enabled is False
     assert "DEFAULT_EMBEDDING_MODEL" in s.embeddings_disabled_reason
+
+
+# ── Infra credentials must be overridden in production (H-3) ──────────────────
+
+def test_weak_infra_defaults_are_allowed_in_development():
+    """Local dev convenience: the committed defaults are fine outside prod."""
+    s = make_settings(APP_ENV="development")
+    assert s.POSTGRES_PASSWORD == "crucible_secret"
+    assert s.S3_ACCESS_KEY == "admin"
+
+
+def test_weak_postgres_password_rejected_in_production():
+    with pytest.raises(Exception, match="POSTGRES_PASSWORD"):
+        make_settings(APP_ENV="production", S3_ACCESS_KEY="x", S3_SECRET_KEY="y")
+
+
+def test_weak_s3_credentials_rejected_in_production():
+    with pytest.raises(Exception, match="S3_ACCESS_KEY"):
+        make_settings(APP_ENV="production", POSTGRES_PASSWORD="strong-pw")
+
+
+def test_strong_infra_credentials_accepted_in_production():
+    s = make_settings(APP_ENV="production", **_STRONG_INFRA)
+    assert s.IS_PRODUCTION is True
+
+
+# ── CORS must never fall back to localhost in production (M-1) ─────────────────
+
+def test_cors_empty_origins_denies_in_production():
+    """
+    With allow_credentials=True, falling back to localhost in prod would trust a
+    dev origin with credentials. An empty allow-list must mean deny.
+    """
+    from backend.main import _resolve_cors_origins
+
+    assert _resolve_cors_origins([], is_production=True) == []
+
+
+def test_cors_empty_origins_allows_localhost_in_development():
+    from backend.main import _resolve_cors_origins
+
+    assert _resolve_cors_origins([], is_production=False) == ["http://localhost:3000"]
+
+
+def test_cors_uses_configured_origins_when_present():
+    from backend.main import _resolve_cors_origins
+
+    configured = ["https://app.example.com"]
+    assert _resolve_cors_origins(configured, is_production=True) == configured
 
 
 # ── Chat model / fallback invariants ──────────────────────────────────────────

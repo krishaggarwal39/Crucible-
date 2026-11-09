@@ -176,6 +176,10 @@ class Settings(BaseSettings):
     S3_SECRET_KEY: str = "admin_secret"
     S3_REGION: str = "us-east-1"
     S3_BUCKET_TRACES: str = "crucible-traces"
+    # Defaults to False because object storage (MinIO) is reached only over the
+    # internal/private network (e.g. http://minio:9000), never across the public
+    # internet. Set to True when S3_ENDPOINT_URL points at a TLS-terminated or
+    # public endpoint (e.g. AWS S3 / Cloudflare R2).
     S3_USE_SSL: bool = False
 
     # ── Auth ─────────────────────────────────────────────────────────────────
@@ -208,6 +212,38 @@ class Settings(BaseSettings):
     def validate_jwt_secret(self) -> "Settings":
         if self.IS_PRODUCTION and self.JWT_SECRET_KEY == "super_secret_jwt_key_change_in_production":
             raise ValueError("JWT_SECRET_KEY must be overridden in non-development environments.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_infra_credentials(self) -> "Settings":
+        """
+        Fail fast when infra credentials still hold their weak committed defaults
+        in production.
+
+        POSTGRES_PASSWORD / S3_ACCESS_KEY / S3_SECRET_KEY ship with convenient
+        local-dev defaults. Any Settings() built outside the hardened compose (a
+        stray container, a manual run, a mis-templated deploy) would otherwise
+        silently inherit those weak values. Validate them the same way
+        JWT_SECRET_KEY and CREDENTIAL_ENCRYPTION_KEY are validated.
+        """
+        if not self.IS_PRODUCTION:
+            return self
+
+        weak_defaults = {
+            "POSTGRES_PASSWORD": "crucible_secret",
+            "S3_ACCESS_KEY": "admin",
+            "S3_SECRET_KEY": "admin_secret",
+        }
+        offenders = [
+            name
+            for name, default in weak_defaults.items()
+            if getattr(self, name) == default
+        ]
+        if offenders:
+            raise ValueError(
+                "The following infra credentials must be overridden in non-development "
+                f"environments (still set to their weak defaults): {', '.join(offenders)}."
+            )
         return self
 
     @model_validator(mode="after")

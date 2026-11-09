@@ -207,6 +207,7 @@ async def _execute_evaluation_run_async(run_id: str):
     fatal_error: str | None = None
     cancelled = False
     final_state: Dict[str, Any] = dict(initial_state)
+    tenant_id: str = str(initial_state["tenant_id"])
 
     try:
         event_bus = EventBus(RedisEventPublisher())
@@ -218,7 +219,11 @@ async def _execute_evaluation_run_async(run_id: str):
 
         await event_bus.publish_evaluation_event(
             EvaluationEventV1(
-                seq_num=seq_num, run_id=run_id, status="running", current_node="start"
+                seq_num=seq_num,
+                run_id=run_id,
+                tenant_id=tenant_id,
+                status="running",
+                current_node="start",
             )
         )
         seq_num += 1
@@ -248,6 +253,7 @@ async def _execute_evaluation_run_async(run_id: str):
                     EvaluationEventV1(
                         seq_num=seq_num,
                         run_id=run_id,
+                        tenant_id=tenant_id,
                         status="running",
                         current_node=node_name,
                         turn_count=final_state.get("turn_count", 0),
@@ -290,6 +296,7 @@ async def _execute_evaluation_run_async(run_id: str):
             EvaluationEventV1(
                 seq_num=seq_num,
                 run_id=run_id,
+                tenant_id=tenant_id,
                 # "cancelled" is now part of the event contract. Publishing it
                 # used to raise ValidationError inside this try block, which the
                 # handler below then reported as a failure.
@@ -316,6 +323,7 @@ async def _execute_evaluation_run_async(run_id: str):
                     EvaluationEventV1(
                         seq_num=seq_num,
                         run_id=run_id,
+                        tenant_id=tenant_id,
                         status="failed",
                         current_node="error",
                         error_message=fatal_error,

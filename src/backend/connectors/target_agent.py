@@ -64,8 +64,9 @@ def _resolve_safe_ip(host: str, port: int) -> str:
     if not addr_info:
         raise SSRFViolationError(f"Could not resolve hostname: {host}")
 
+    first_validated: str | None = None
     for info in addr_info:
-        candidate = info[4][0]
+        candidate = str(info[4][0])
         try:
             ip_obj = ipaddress.ip_address(candidate)
         except ValueError:
@@ -74,9 +75,17 @@ def _resolve_safe_ip(host: str, port: int) -> str:
             raise SSRFViolationError(
                 f"Hostname {host} resolved to restricted address {candidate}."
             )
+        if first_validated is None:
+            first_validated = candidate
 
-    # All records validated; connect to the first one.
-    return addr_info[0][4][0]
+    if first_validated is None:
+        # Every record failed to parse as an IP address.
+        raise SSRFViolationError(f"Could not resolve hostname: {host}")
+
+    # Return the exact record we parsed AND validated, so the IP the caller
+    # connects to is provably one that passed _is_forbidden_ip — rather than
+    # addr_info[0], which may be an entry we skipped as unparseable.
+    return first_validated
 
 
 class SSRFSafeBackend(httpcore.AnyIOBackend):

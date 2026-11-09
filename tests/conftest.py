@@ -136,6 +136,30 @@ async def test_session(test_engine):
         yield session
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_rate_limiter():
+    """
+    Clear rate-limit counters before each test.
+
+    The limiter keys requests per client IP in Redis with a 60s window. Under the
+    ASGI test transport every request shares the "unknown" bucket, so without a
+    reset the auth tier (10/min) would start returning 429/503 to later tests in
+    a file purely because earlier tests used up the window.
+    """
+    import redis.asyncio as _aioredis
+
+    r = _aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        keys = await r.keys("rl:*")
+        if keys:
+            await r.delete(*keys)
+    except Exception:
+        pass
+    finally:
+        await r.aclose()
+    yield
+
+
 @pytest_asyncio.fixture
 async def client(test_session):
     async def override_get_db():

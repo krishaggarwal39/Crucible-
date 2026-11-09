@@ -116,6 +116,7 @@ async def test_worker_accumulation_matches_graph_state():
          patch("backend.agents.judge.llm_client.generate", new_callable=AsyncMock,
                return_value={"parsed": judged, "cost_usd": 0.02}), \
          patch("backend.agents.analyzer.vector_db.init_collection", new_callable=AsyncMock), \
+         patch("backend.agents.analyzer.vector_db.verify_dimensions", new_callable=AsyncMock), \
          patch("backend.agents.analyzer.s3_client.download_trace", new_callable=AsyncMock,
                return_value=b'{"interactions": []}'), \
          patch("backend.agents.analyzer.llm_client.generate", new_callable=AsyncMock,

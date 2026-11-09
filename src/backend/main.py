@@ -55,10 +55,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Set all CORS enabled origins
-origins = settings.ALLOW_ORIGINS if settings.ALLOW_ORIGINS else ["http://localhost:3000"]
-if not settings.ALLOW_ORIGINS and settings.IS_PRODUCTION:
-    logger.warning("CORS origins are empty in production. Configure ALLOW_ORIGINS.")
+def _resolve_cors_origins(configured: list[str], is_production: bool) -> list[str]:
+    """
+    Resolve the CORS allow-list.
+
+    In production an empty ALLOW_ORIGINS is a DENY (empty list), never a
+    localhost fallback — with allow_credentials=True a localhost fallback would
+    let a dev origin ride authenticated requests in a misconfigured prod deploy.
+    The localhost fallback is kept only for local development convenience.
+    """
+    if configured:
+        return configured
+    if is_production:
+        logger.warning(
+            "CORS origins are empty in production; all cross-origin requests will "
+            "be denied. Configure ALLOW_ORIGINS."
+        )
+        return []
+    return ["http://localhost:3000"]
+
+
+origins = _resolve_cors_origins(settings.ALLOW_ORIGINS, settings.IS_PRODUCTION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,7 +109,13 @@ async def readiness_check(session: SessionDep):
     """
     Readiness probe — verifies the database is reachable.
 
-    Rate limited under the default tier because it does real work.
+    Intentionally left unauthenticated: orchestration (compose/k8s) health checks
+    hit this without credentials, so gating it would break those probes. It does a
+    real DB round-trip, so unlike /health it is NOT exempt from rate limiting — it
+    runs under the default tier, which bounds the amplification from anonymous
+    callers. If stricter exposure is ever required, restrict it at the network
+    layer (e.g. only reachable from the internal orchestration network) rather
+    than adding auth here.
     """
     try:
         await session.execute(text("SELECT 1"))

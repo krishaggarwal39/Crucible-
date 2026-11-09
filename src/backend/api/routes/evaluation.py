@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.api.deps import CurrentAdmin, CurrentUser
 from backend.core.config import get_settings
+from backend.core.events import stream_channel
 from backend.core.telemetry import get_sse_active_connections
 from backend.db.models import EvaluationRun, Judgment, Scenario, TraceMetadata
 from backend.db.session import get_db
@@ -389,7 +390,11 @@ async def get_stream_ticket(
     ticket = str(uuid.uuid4())
     redis = aioredis.from_url(settings.REDIS_PUBSUB_URL)
     try:
-        await redis.setex(f"ticket:{ticket}", STREAM_TICKET_TTL_SECONDS, str(run_id))
+        # Bind the ticket to tenant_id as well as run_id so the SSE subscriber
+        # can rebuild the tenant-namespaced channel/replay keys without a second
+        # DB lookup. Stored as "<tenant_id>:<run_id>".
+        ticket_value = f"{current_user.tenant_id}:{run_id}"
+        await redis.setex(f"ticket:{ticket}", STREAM_TICKET_TTL_SECONDS, ticket_value)
     finally:
         await redis.aclose()
 
@@ -410,72 +415,84 @@ async def stream_evaluation_run(
     On reconnection, pass `last_seq` (the last seq_num you received) to replay
     any events missed during the disconnection window.
     """
-    redis = aioredis.from_url(settings.REDIS_PUBSUB_URL)
-
+    # Validate the ticket on a short-lived client that we open and close here.
+    # The streaming client below is owned solely by event_generator, so there is
+    # exactly one close owner per client and no path double-closes.
+    ticket_redis = aioredis.from_url(settings.REDIS_PUBSUB_URL)
     try:
         ticket_key = f"ticket:{ticket}"
-        authorized_run_id = await redis.get(ticket_key)
-        if not authorized_run_id or authorized_run_id.decode("utf-8") != str(run_id):
+        raw_ticket = await ticket_redis.get(ticket_key)
+        if not raw_ticket:
+            raise HTTPException(status_code=401, detail="Invalid or expired stream ticket")
+
+        # Ticket value is "<tenant_id>:<run_id>". Split on the last ':' so a
+        # tenant_id (a UUID, no ':') and run_id are recovered unambiguously.
+        decoded = raw_ticket.decode("utf-8")
+        tenant_id, _, ticket_run_id = decoded.rpartition(":")
+        if not tenant_id or ticket_run_id != str(run_id):
             raise HTTPException(status_code=401, detail="Invalid or expired stream ticket")
 
         # Consume the ticket so it can't be reused
-        await redis.delete(ticket_key)
+        await ticket_redis.delete(ticket_key)
+    finally:
+        await ticket_redis.aclose()
 
-        async def event_generator(redis_client):
-            sse_gauge = get_sse_active_connections()
-            sse_gauge.add(1)
-            pubsub = None
-            channel_name = f"eval_stream:{run_id}"
-            try:
-                if last_seq > 0:
-                    from backend.core.events import RedisEventPublisher
+    async def event_generator():
+        # This generator is the sole owner of its streaming Redis client: it
+        # opens the client and closes it once in its own finally, so no other
+        # path closes the same object.
+        redis_client = aioredis.from_url(settings.REDIS_PUBSUB_URL)
+        sse_gauge = get_sse_active_connections()
+        sse_gauge.add(1)
+        pubsub = None
+        channel_name = stream_channel(tenant_id, str(run_id))
+        try:
+            if last_seq > 0:
+                from backend.core.events import RedisEventPublisher
 
-                    replay_publisher = RedisEventPublisher()
-                    try:
-                        missed_events = await replay_publisher.get_replay_events(
-                            str(run_id), last_seq
-                        )
-                        for event_data in missed_events:
-                            yield {"data": event_data}
-                    finally:
-                        await replay_publisher.close()
-
-                pubsub = redis_client.pubsub()
-                await pubsub.subscribe(channel_name)
-                logger.info(f"Subscribed to {channel_name}")
-
-                while True:
-                    if await request.is_disconnected():
-                        break
-
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=1.0
+                replay_publisher = RedisEventPublisher()
+                try:
+                    missed_events = await replay_publisher.get_replay_events(
+                        tenant_id, str(run_id), last_seq
                     )
-                    if message and message["type"] == "message":
-                        data = message["data"]
-                        if isinstance(data, bytes):
-                            data = data.decode("utf-8")
-                        yield {"data": data}
+                    for event_data in missed_events:
+                        yield {"data": event_data}
+                finally:
+                    await replay_publisher.close()
 
-                    await asyncio.sleep(0.01)
-            except asyncio.CancelledError:
-                pass
-            finally:
-                # Always tear down, even if the replay step raised, so a failed
-                # replay cannot leak a pubsub subscription or skew the gauge.
-                if pubsub is not None:
-                    try:
-                        await pubsub.unsubscribe(channel_name)
-                    except Exception:
-                        pass
-                await redis_client.aclose()
-                sse_gauge.add(-1)
-                logger.info(f"Unsubscribed from {channel_name}")
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe(channel_name)
+            logger.info(f"Subscribed to {channel_name}")
 
-        return EventSourceResponse(event_generator(redis))
-    except Exception:
-        await redis.aclose()
-        raise
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message and message["type"] == "message":
+                    data = message["data"]
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8")
+                    yield {"data": data}
+
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Always tear down, even if the replay step raised, so a failed
+            # replay cannot leak a pubsub subscription or skew the gauge.
+            if pubsub is not None:
+                try:
+                    await pubsub.unsubscribe(channel_name)
+                except Exception:
+                    pass
+            await redis_client.aclose()
+            sse_gauge.add(-1)
+            logger.info(f"Unsubscribed from {channel_name}")
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/{run_id}/baseline", response_model=EvaluationRunResponse)

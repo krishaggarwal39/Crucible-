@@ -27,6 +27,9 @@ class EvaluationEventV1(BaseEvent):
     """
 
     run_id: str
+    # Tenant that owns the run. Used to namespace the pub/sub channel and replay
+    # buffer so a run's events are never addressable by run_id alone.
+    tenant_id: str
     status: EventStatus
 
     # Snapshot fields

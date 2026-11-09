@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from backend.db.models.user import UserRole
 
@@ -21,8 +21,8 @@ class UserCreate(UserBase):
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
-    name: str
-    company_name: str
+    name: str = Field(..., min_length=1, max_length=255)
+    company_name: str = Field(..., min_length=1, max_length=255)
 
     @field_validator("password")
     @classmethod

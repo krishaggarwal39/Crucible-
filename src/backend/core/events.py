@@ -23,6 +23,23 @@ MAX_REPLAY_BUFFER_SIZE = 200
 REPLAY_BUFFER_TTL_SECONDS = 3600  # 1 hour
 
 
+def stream_channel(tenant_id: str, run_id: str) -> str:
+    """
+    Pub/sub channel for a run's progress events, namespaced by tenant.
+
+    Defense-in-depth: ticket issuance is already tenant-checked, but keying the
+    channel by tenant too means a run's events can never be addressed by run_id
+    alone across tenants. Publisher and subscriber must build the key the same
+    way for events to flow.
+    """
+    return f"eval_stream:{tenant_id}:{run_id}"
+
+
+def replay_key(tenant_id: str, run_id: str) -> str:
+    """Replay-buffer key for a run, namespaced by tenant (see stream_channel)."""
+    return f"eval_replay:{tenant_id}:{run_id}"
+
+
 class EventPublisher(Protocol):
     """Abstract protocol for event transport."""
     async def publish(self, channel: str, message: str) -> None:
@@ -40,9 +57,9 @@ class RedisEventPublisher:
             logger.error(f"Failed to publish to redis channel {channel}: {e}")
             raise
 
-    async def store_for_replay(self, run_id: str, message: str) -> None:
+    async def store_for_replay(self, tenant_id: str, run_id: str, message: str) -> None:
         """Store event in a Redis list for replay on reconnection."""
-        key = f"eval_replay:{run_id}"
+        key = replay_key(tenant_id, run_id)
         try:
             pipe = self.redis.pipeline()
             pipe.rpush(key, message)
@@ -53,12 +70,14 @@ class RedisEventPublisher:
             # Non-critical — replay is best-effort
             logger.warning(f"Failed to store replay event for {run_id}: {e}")
 
-    async def get_replay_events(self, run_id: str, after_seq: int) -> list[str]:
+    async def get_replay_events(
+        self, tenant_id: str, run_id: str, after_seq: int
+    ) -> list[str]:
         """
         Retrieve stored events for a run that have seq_num > after_seq.
         Returns raw JSON strings ready to send to the client.
         """
-        key = f"eval_replay:{run_id}"
+        key = replay_key(tenant_id, run_id)
         try:
             all_events = await self.redis.lrange(key, 0, -1)
             replay = []
@@ -92,7 +111,7 @@ class EventBus:
     async def publish_evaluation_event(self, event: EvaluationEventV1) -> None:
         """Publishes an EvaluationEventV1 safely with full observability."""
         start_time = time.perf_counter()
-        channel = f"eval_stream:{event.run_id}"
+        channel = stream_channel(event.tenant_id, event.run_id)
         
         try:
             # Pydantic validation is already enforced by the type hint/instantiation,
@@ -103,7 +122,9 @@ class EventBus:
             
             # Also store for replay on reconnection
             if hasattr(self.publisher, "store_for_replay"):
-                await self.publisher.store_for_replay(event.run_id, payload)
+                await self.publisher.store_for_replay(
+                    event.tenant_id, event.run_id, payload
+                )
             
             # Metrics: Success. Resolved on use so they bind to the real
             # MeterProvider rather than the no-op default present at import time.
