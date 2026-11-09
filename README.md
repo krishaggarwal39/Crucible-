@@ -282,8 +282,10 @@ consulted when `TRUSTED_PROXY_COUNT > 0`, and then the hop appended by your
 trusted proxy is used — not the leftmost (caller-supplied) value. Set this
 correctly or the limiter will bucket every request behind a proxy together.
 
-If Redis is unavailable the limiter fails **open**, so requests are allowed
-through un-throttled.
+Redis-outage behaviour is tier-dependent. Auth endpoints (login/register) fail
+**closed** — a Redis outage returns `503` rather than silently dropping
+brute-force protection. The general API tier fails **open** so a Redis blip does
+not take down normal traffic.
 
 ## Running Tests
 
